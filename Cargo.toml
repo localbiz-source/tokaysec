@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+security-framework = "3.2.0"
+openssl = "0.10.73"
+sha3 = "0.10.8"
+argon2 = { version = "0.5.3", default-features = false, features = ["zeroize"]}
+aes-gcm = { version = "0.10.3", default-features = false, features = ["zeroize", "heapless"]}
