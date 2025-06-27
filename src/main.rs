@@ -3,6 +3,7 @@ mod dek;
 mod flags;
 mod kek_provider;
 mod secure_buf;
+mod config;
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -26,6 +27,7 @@ use zeroize::Zeroizing;
 use crate::{
     kek_provider::{KekProvider, fs::FileSystemKEKProvider},
     secure_buf::SecureBuffer,
+    config::Config
 };
 use tiny_keccak::{Hasher, Kmac};
 
@@ -49,7 +51,12 @@ async fn main() {
     unsafe { std::env::set_var("OPENSSL_DIR", "/Users/justin/openssl-fips") };
 
     mem::forget(Provider::load(None, "fips").unwrap());
-    let kek_provider = FileSystemKEKProvider::init();
+    let config_file = std::fs::read_to_string("./Config.toml").unwrap();
+    let config: Config = toml::from_str(&config_file).unwrap();
+    let kek_provider = match config.kek.provider.as_str() {
+        "fs" => FileSystemKEKProvider::init(),
+        unknown @ _ => panic!("Unknown KEK provider set in config file: {:?}", unknown)
+    };
     let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
     // Generate dek
     let mut _dek: SecureBuffer = SecureBuffer::new(32).unwrap();
@@ -90,12 +97,12 @@ async fn main() {
     .unwrap();
     // Finish encryption
     // Wrap the DEK in the Kek and prepare to store along side secret
-    let (wrapped_key, dek_nonce) = kek_provider
+    let (wrapped_key, dek_nonce, tag) = kek_provider
         .wrap_dek(_dek, "super-secret-name")
         .await
         .unwrap();
     let _dek = kek_provider
-        .unwrap_dek(&wrapped_key, dek_nonce, "super-secret-name")
+        .unwrap_dek(&wrapped_key, dek_nonce, tag,"super-secret-name")
         .await;
     //drop(_dek);
     println!(

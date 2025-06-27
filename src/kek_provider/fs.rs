@@ -1,6 +1,7 @@
 use aes_gcm::aead::Payload;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, Params, PasswordHasher};
+use openssl::symm::{Cipher, decrypt_aead, encrypt_aead};
 use ring::rand::SecureRandom;
 
 use crate::{kek_provider::KekProvider, secure_buf::SecureBuffer};
@@ -19,6 +20,18 @@ impl KekProvider for FileSystemKEKProvider {
     where
         Self: Sized,
     {
+        println!("************************************************************************");
+        println!("************************************************************************");
+        println!("************************************************************************");
+        println!(
+"
+USING THE FILE SYSTEM KEK PROVIDER IS HIGHLY INSECURE. 
+CONSIDER USING A CLOUD PROVIDER OR THE TOKAY-KMS. THIS
+IS MEANT FOR TESTING PURPOSES ONLY.
+");
+        println!("************************************************************************");
+        println!("************************************************************************");
+        println!("************************************************************************");
         let salt = SaltString::generate(&mut OsRng);
 
         // Derive KEK with Argon2id
@@ -42,41 +55,39 @@ impl KekProvider for FileSystemKEKProvider {
         &self,
         dek: &'a [u8],
         nonce: [u8; 12],
+        tag: [u8; 16],
         secret_name: &'a str,
     ) -> SecureBuffer {
-        let cipher = Aes256Gcm::new_from_slice(self._kek.expose()).unwrap();
-        let dek_bytes = cipher
-            .decrypt(
-                Nonce::from_slice(&nonce),
-                Payload {
-                    msg: &dek,
-                    aad: format!("secret:{}", secret_name).as_bytes(),
-                },
-            )
-            .unwrap();
-
+        let dek_bytes = decrypt_aead(
+            Cipher::aes_256_gcm(),
+            &self._kek.expose(),
+            Some(&nonce),
+            &format!("secret:{}", secret_name).as_bytes(),
+            &dek,
+            &tag,
+        )
+        .unwrap();
         return SecureBuffer::from_slice(&dek_bytes).unwrap();
     }
     async fn wrap_dek<'a>(
         &self,
         dek: SecureBuffer,
         secret_name: &'a str,
-    ) -> Result<(Vec<u8>, [u8; 12]), String> {
-        let cipher = Aes256Gcm::new_from_slice(self._kek.expose()).unwrap();
+    ) -> Result<(Vec<u8>, [u8; 12], [u8; 16]), String> {
         let mut nonce: [u8; 12] = [0; 12];
         let sr = ring::rand::SystemRandom::new();
         sr.fill(&mut nonce).unwrap();
-
-        let ciphertext = cipher
-            .encrypt(
-                Nonce::from_slice(&nonce),
-                Payload {
-                    msg: dek.expose(),
-                    aad: format!("secret:{}", secret_name).as_bytes(),
-                },
-            )
-            .unwrap();
+        let mut tag = [0u8; 16];
+        let ciphertext = encrypt_aead(
+            Cipher::aes_256_gcm(),
+            &self._kek.expose(),
+            Some(&nonce),
+            &format!("secret:{}", secret_name).as_bytes(),
+            &dek.expose(),
+            &mut tag,
+        )
+        .unwrap();
         drop(dek);
-        Ok((ciphertext, nonce))
+        Ok((ciphertext, nonce, tag))
     }
 }
