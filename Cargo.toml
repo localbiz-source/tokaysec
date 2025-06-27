@@ -33,3 +33,15 @@ hkdf = "0.12.4"
 zeroize = "*"
 tiny-keccak = { version = "2.0.2", features = ["kmac"] }
 subtle = "2.6.1"
+bitflags = { version = "2.9.1", features = ["serde"] }
+sqlx = { version = "0.8.6", features = [
+    "migrate",
+    "json",
+    "postgres",
+    "ipnetwork",
+    "mac_address",
+    "chrono",
+    "macros",
+    "runtime-tokio-native-tls",
+    "tls-rustls-ring-native-roots",
+] }

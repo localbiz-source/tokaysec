@@ -1,6 +1,7 @@
 use crate::secure_buf::SecureBuffer;
 
 pub mod fs;
+
 #[async_trait::async_trait]
 pub trait KekProvider {
     fn init() -> Self
@@ -9,10 +10,19 @@ pub trait KekProvider {
     {
         unimplemented!()
     }
-    async fn unwrap_dek(&self, dek: SecureBuffer) -> () {
-        return ();
+    async fn unwrap_dek<'a>(
+        &self,
+        _dek: &'a [u8],
+        _nonce: [u8; 12],
+        _secret_name: &'a str,
+    ) -> SecureBuffer {
+        unimplemented!()
     }
-    async fn wrap_dek<'a>(&self, dek: &'a SecureBuffer) -> Result<(Vec<u8>, [u8; 12]), String> {
+    async fn wrap_dek<'a>(
+        &self,
+        _dek: SecureBuffer,
+        _secret_name: &'a str,
+    ) -> Result<(Vec<u8>, [u8; 12]), String> {
         unimplemented!()
     }
 }

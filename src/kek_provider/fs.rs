@@ -1,4 +1,5 @@
-use argon2::password_hash::{PasswordHash, SaltString};
+use aes_gcm::aead::Payload;
+use argon2::password_hash::SaltString;
 use argon2::{Argon2, Params, PasswordHasher};
 use ring::rand::SecureRandom;
 
@@ -37,25 +38,45 @@ impl KekProvider for FileSystemKEKProvider {
 
         return Self { _kek: kek };
     }
-    async fn unwrap_dek(&self, dek: SecureBuffer) -> () {
-        /*
-                    let cipher = Aes256Gcm::new_from_slice(self.kek.expose())?;
+    async fn unwrap_dek<'a>(
+        &self,
+        dek: &'a [u8],
+        nonce: [u8; 12],
+        secret_name: &'a str,
+    ) -> SecureBuffer {
+        let cipher = Aes256Gcm::new_from_slice(self._kek.expose()).unwrap();
+        let dek_bytes = cipher
+            .decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &dek,
+                    aad: format!("secret:{}", secret_name).as_bytes(),
+                },
+            )
+            .unwrap();
 
-            // Decrypt DEK
-            let dek_bytes = cipher.decrypt(Nonce::from_slice(nonce), wrapped_dek)?;
-            SecureBuffer::from_slice(&dek_bytes)
-         */
-        return ();
+        return SecureBuffer::from_slice(&dek_bytes).unwrap();
     }
-    async fn wrap_dek<'a>(&self, dek: &'a SecureBuffer) -> Result<(Vec<u8>, [u8; 12]), String> {
+    async fn wrap_dek<'a>(
+        &self,
+        dek: SecureBuffer,
+        secret_name: &'a str,
+    ) -> Result<(Vec<u8>, [u8; 12]), String> {
         let cipher = Aes256Gcm::new_from_slice(self._kek.expose()).unwrap();
         let mut nonce: [u8; 12] = [0; 12];
         let sr = ring::rand::SystemRandom::new();
         sr.fill(&mut nonce).unwrap();
 
         let ciphertext = cipher
-            .encrypt(Nonce::from_slice(&nonce), dek.expose())
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: dek.expose(),
+                    aad: format!("secret:{}", secret_name).as_bytes(),
+                },
+            )
             .unwrap();
+        drop(dek);
         Ok((ciphertext, nonce))
     }
 }

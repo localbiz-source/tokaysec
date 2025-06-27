@@ -1,13 +1,19 @@
+mod db;
+mod dek;
+mod flags;
+mod kek_provider;
+mod secure_buf;
+
 use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, KeyInit, OsRng, Payload, rand_core::RngCore},
 };
 use hkdf::Hkdf;
-use openssl::provider::Provider;
+use openssl::{
+    provider::Provider,
+    symm::{Cipher, decrypt_aead, encrypt_aead},
+};
 
-mod dek;
-mod kek_provider;
-mod secure_buf;
 use ring::rand::SecureRandom;
 use sha3::{
     Digest, Keccak384, Sha3_384,
@@ -44,7 +50,7 @@ async fn main() {
 
     mem::forget(Provider::load(None, "fips").unwrap());
     let kek_provider = FileSystemKEKProvider::init();
-    let secret_to_encrypt: String = String::from("super-secret");
+    let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
     // Generate dek
     let mut _dek: SecureBuffer = SecureBuffer::new(32).unwrap();
     let dek_slice = _dek.expose_mut();
@@ -72,37 +78,33 @@ async fn main() {
     let mut nonce: [u8; 12] = [0; 12];
     let sr = ring::rand::SystemRandom::new();
     sr.fill(&mut nonce).unwrap();
-    let ciphertext = cipher
-        .encrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: secret_to_encrypt.as_bytes(),
-                aad: &aad,
-            },
-        )
-        .unwrap();
+    let mut gcm_tag = [0u8; 16];
+    let ciphertext = encrypt_aead(
+        Cipher::aes_256_gcm(),
+        &aes_key,
+        Some(&nonce),
+        &aad,
+        &secret_to_encrypt.as_bytes(),
+        &mut gcm_tag,
+    )
+    .unwrap();
     // Finish encryption
-    // Start Kmac 256 tag generation
-    //let raw_ciphertext = ciphertext.to_owned();
-    let mut mac = Kmac::v256(&kmac_key, &[]);
-    for chunk in &[&ciphertext, &aad] {
-        mac.update(chunk);
-    }
-    // KMAC-256 over ciphertext + AAD
-    let mut kmac_tag = [0u8; 32];
-    mac.finalize(&mut kmac_tag);
-    // End Kmac generation
-    //ciphertext.extend_from_slice(&kmac_tag);
     // Wrap the DEK in the Kek and prepare to store along side secret
-    let (wrapped_key, dek_nonce) = kek_provider.wrap_dek(&_dek).await.unwrap();
+    let (wrapped_key, dek_nonce) = kek_provider
+        .wrap_dek(_dek, "super-secret-name")
+        .await
+        .unwrap();
+    let _dek = kek_provider
+        .unwrap_dek(&wrapped_key, dek_nonce, "super-secret-name")
+        .await;
     //drop(_dek);
     println!(
-        "{:?} {:?} {:?} {:?} {:?} {:?}",
-        ciphertext, nonce, kmac_tag, wrapped_key, dek_nonce, aad
+        "{:?} {:?} {:?} {:?} {:?}",
+        ciphertext, nonce, wrapped_key, dek_nonce, aad
     );
     // End encryption section
 
-    // Decrypt
+    // Decrypt∂
     // Split start
     let dek = _dek.expose();
     let mut aes_key = [0u8; 32];
@@ -117,26 +119,18 @@ async fn main() {
     for chunk in &[&ciphertext, &aad] {
         mac.update(chunk);
     }
-    // KMAC-256 over ciphertext + AAD
-    let mut computed_kmac_tag = [0u8; 32];
-    mac.finalize(&mut computed_kmac_tag);
-    // Compute kmac end
-    // Compare start
-    if kmac_tag.ct_ne(&computed_kmac_tag).into() {
-        panic!("mismatch: {:?} != {:?}", kmac_tag, computed_kmac_tag);
-    }
-    // compare end
-    // decipher start
+
     let cipher = Aes256Gcm::new_from_slice(&aes_key).unwrap();
-    let plaintext = cipher
-        .decrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: &ciphertext,
-                aad: &aad,
-            },
-        )
-        .unwrap();
+
+    let plaintext = decrypt_aead(
+        Cipher::aes_256_gcm(),
+        &aes_key,
+        Some(&nonce),
+        &aad,
+        &ciphertext,
+        &gcm_tag,
+    )
+    .unwrap();
     // decipher end
     let value = Zeroizing::new(plaintext);
     println!("{:?}", String::from_utf8(value.to_vec()));

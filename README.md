@@ -26,3 +26,7 @@ Planned initial features:
     - [ ] TBD Other keys (suggestions? issue)
 
 raise an issue for more. boilerplate code for now.
+
+### KMS
+
+The provided TokayKMS is ...
