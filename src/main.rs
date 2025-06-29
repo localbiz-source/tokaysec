@@ -1,9 +1,10 @@
+mod config;
 mod db;
 mod dek;
 mod flags;
 mod kek_provider;
+mod models;
 mod secure_buf;
-mod config;
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -25,9 +26,9 @@ use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use crate::{
+    config::Config,
     kek_provider::{KekProvider, fs::FileSystemKEKProvider},
     secure_buf::SecureBuffer,
-    config::Config
 };
 use tiny_keccak::{Hasher, Kmac};
 
@@ -38,24 +39,43 @@ async fn main() {
     unsafe {
         std::env::set_var(
             "OPENSSL_MODULES",
-            "/Users/justin/openssl-fips/lib/ossl-modules",
+            "/usr/local/lib64/ossl-modules", //"/Users/justin/openssl-fips/lib/ossl-modules",
         )
     };
-    unsafe { std::env::set_var("OPENSSL_CONF", "/Users/justin/openssl-fips/ssl/openssl.cnf") };
+    unsafe { std::env::set_var("OPENSSL_CONF", "/home/justin/tokaysec/openssl.cnf") }; //"/Users/justin/openssl-fips/ssl/openssl.cnf") };
+    // unsafe {
+    //     std::env::set_var(12
+    //         "DYLD_LIBRARY_PATH",
+    //         "/Users/justin/openssl-fips/lib/ossl-modules:$DYLD_LIBRARY_PATH",
+    //     )
+    // };
     unsafe {
         std::env::set_var(
-            "DYLD_LIBRARY_PATH",
-            "/Users/justin/openssl-fips/lib/ossl-modules:$DYLD_LIBRARY_PATH",
+            "LD_LIBRARY_PATH",
+            "/usr/local/lib64/ossl-modules/:$LD_LIBRARY_PATH",
         )
-    };
-    unsafe { std::env::set_var("OPENSSL_DIR", "/Users/justin/openssl-fips") };
 
+    };
+
+
+    /*
+    
+    export OPENSSL_DIR=/home/justin/openssl-3.1.2
+export OPENSSL_NO_PKG_CONFIG=1
+export OPENSSL_CONF=/home/justin/tokaysec/openssl.cnf
+export LD_LIBRARY_PATH=/usr/local/lib64/ossl-modules/:$LD_LIBRARY_PATH
+export OPENSSL_LIB_DIR=/home/justin/openssl-3.1.2
+export OPENSSL_INCLUDE_DIR=/home/justin/openssl-3.1.2/include
+
+cargo build
+
+     */    
     mem::forget(Provider::load(None, "fips").unwrap());
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
     let kek_provider = match config.kek.provider.as_str() {
         "fs" => FileSystemKEKProvider::init(),
-        unknown @ _ => panic!("Unknown KEK provider set in config file: {:?}", unknown)
+        unknown @ _ => panic!("Unknown KEK provider set in config file: {:?}", unknown),
     };
     let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
     // Generate dek
@@ -109,7 +129,7 @@ async fn main() {
         .await
         .unwrap();
     let _dek = kek_provider
-        .unwrap_dek(&wrapped_key, dek_nonce, tag,"super-secret-name")
+        .unwrap_dek(&wrapped_key, dek_nonce, tag, "super-secret-name")
         .await;
     //drop(_dek);
     println!(
