@@ -95,6 +95,13 @@ async fn main() {
         &mut gcm_tag,
     )
     .unwrap();
+    let mut mac = Kmac::v256(&kmac_key, &[]);
+    for chunk in &[&ciphertext, &aad] {
+        mac.update(chunk);
+    }
+    // KMAC-256 over ciphertext + AAD
+    let mut kmac_tag = [0u8; 32];
+    mac.finalize(&mut kmac_tag);
     // Finish encryption
     // Wrap the DEK in the Kek and prepare to store along side secret
     let (wrapped_key, dek_nonce, tag) = kek_provider
@@ -126,8 +133,14 @@ async fn main() {
     for chunk in &[&ciphertext, &aad] {
         mac.update(chunk);
     }
-
-    let cipher = Aes256Gcm::new_from_slice(&aes_key).unwrap();
+    // KMAC-256 over ciphertext + AAD
+    let mut computed_kmac_tag = [0u8; 32];
+    mac.finalize(&mut computed_kmac_tag);
+    // Compute kmac end
+    // Compare start
+    if kmac_tag.ct_ne(&computed_kmac_tag).into() {
+        panic!("mismatch: {:?} != {:?}", kmac_tag, computed_kmac_tag);
+    }
 
     let plaintext = decrypt_aead(
         Cipher::aes_256_gcm(),
