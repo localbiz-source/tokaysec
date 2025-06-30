@@ -1,11 +1,12 @@
-mod templated_config;
 mod config;
 mod db;
 mod dek;
+mod engines;
 mod flags;
 mod kek_provider;
 mod models;
 mod secure_buf;
+mod templated_config;
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -29,6 +30,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     config::Config,
+    engines::key_value::KeyValueEngine,
     kek_provider::{KekProvider, fs::FileSystemKEKProvider},
     models::{StoredSecret, StoredSecretObject},
     secure_buf::SecureBuffer,
@@ -74,11 +76,13 @@ async fn main() {
     mem::forget(Provider::load(None, "fips").unwrap());
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
-    let database: Pool<Postgres> = Pool::connect(&config.postgres).await.unwrap();
+    //let database: Pool<Postgres> = Pool::connect(&config.postgres).await.unwrap();
     let kek_provider = match config.kek.provider.as_str() {
         "fs" => FileSystemKEKProvider::init(),
         unknown @ _ => panic!("Unknown KEK provider set in config file: {:?}", unknown),
     };
+    let key_value_engine = KeyValueEngine::init(&config.postgres).await.unwrap();
+    /*
     let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
     // Generate dek
     let mut _dek: SecureBuffer = SecureBuffer::new(32).unwrap();
@@ -147,6 +151,7 @@ async fn main() {
         },
     };
     println!("{:?}", serde_json::to_string(&secret));
+    */
     // println!(
     //     "{:?} {:?} {:?} {:?} {:?}",
     //     ciphertext, nonce, wrapped_key, dek_nonce, aad
