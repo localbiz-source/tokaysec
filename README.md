@@ -3,6 +3,8 @@
 
 TODO...
 
+- [ ] mTLS PostgreSQL database connection. Pretty big for me, please update in the future.
+
 Planned initial features:
 - [ ] Zero trust by default
     - [ ] Access roles/groups, project scopes (dev,staging,prod,etc.), advanced user permissions (TBD:add the 

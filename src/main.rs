@@ -1,3 +1,4 @@
+mod templated_config;
 mod config;
 mod db;
 mod dek;
@@ -21,6 +22,7 @@ use sha3::{
     Digest, Keccak384, Sha3_384,
     digest::{ExtendableOutput, Update, XofReader},
 };
+use sqlx::{Pool, Postgres};
 use std::mem;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
@@ -72,6 +74,7 @@ async fn main() {
     mem::forget(Provider::load(None, "fips").unwrap());
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
+    let database: Pool<Postgres> = Pool::connect(&config.postgres).await.unwrap();
     let kek_provider = match config.kek.provider.as_str() {
         "fs" => FileSystemKEKProvider::init(),
         unknown @ _ => panic!("Unknown KEK provider set in config file: {:?}", unknown),

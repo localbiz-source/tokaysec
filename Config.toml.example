@@ -1,2 +1,4 @@
+postgres = "postgres://<username>:<password>@<host>:<port>/<database>"
+
 [kek]
 provider = "fs"

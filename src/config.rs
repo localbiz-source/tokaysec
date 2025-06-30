@@ -7,5 +7,6 @@ pub struct KekConfig {
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-    pub kek: KekConfig
+    pub kek: KekConfig,
+    pub postgres: String
 }
