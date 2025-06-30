@@ -1,4 +1,5 @@
 postgres = "postgres://<username>:<password>@<host>:<port>/<database>"
+migrations = "./migrations"
 
 [kek]
 provider = "fs"

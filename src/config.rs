@@ -8,5 +8,6 @@ pub struct KekConfig {
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     pub kek: KekConfig,
+    pub migrations: String,
     pub postgres: String
 }

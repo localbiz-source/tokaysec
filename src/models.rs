@@ -12,8 +12,8 @@ pub struct StoredSecretObject {
 
 #[derive(Serialize, Deserialize, FromRow)]
 pub struct StoredSecret {
-    pub name: String,
-    pub version: String,
+    pub key: String,
+    //pub version: String,
     pub id: String,
-    pub secret_object: StoredSecretObject,
+    pub secret: serde_json::Value//StoredSecretObject,
 }
