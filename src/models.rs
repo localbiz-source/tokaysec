@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
+use sqlx::FromRow;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, FromRow)]
 pub struct StoredSecretObject {
     pub ciphertext: Vec<u8>,
     pub kmac_tag: Vec<u8>,
@@ -9,11 +10,10 @@ pub struct StoredSecretObject {
     pub nonce: Vec<u8>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, FromRow)]
 pub struct StoredSecret {
     pub name: String,
     pub version: String,
     pub id: String,
     pub secret_object: StoredSecretObject,
-
 }

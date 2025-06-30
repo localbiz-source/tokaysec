@@ -28,6 +28,7 @@ use zeroize::Zeroizing;
 use crate::{
     config::Config,
     kek_provider::{KekProvider, fs::FileSystemKEKProvider},
+    models::{StoredSecret, StoredSecretObject},
     secure_buf::SecureBuffer,
 };
 use tiny_keccak::{Hasher, Kmac};
@@ -54,22 +55,20 @@ async fn main() {
             "LD_LIBRARY_PATH",
             "/usr/local/lib64/ossl-modules/:$LD_LIBRARY_PATH",
         )
-
     };
 
-
     /*
-    
-    export OPENSSL_DIR=/home/justin/openssl-3.1.2
-export OPENSSL_NO_PKG_CONFIG=1
-export OPENSSL_CONF=/home/justin/tokaysec/openssl.cnf
-export LD_LIBRARY_PATH=/usr/local/lib64/ossl-modules/:$LD_LIBRARY_PATH
-export OPENSSL_LIB_DIR=/home/justin/openssl-3.1.2
-export OPENSSL_INCLUDE_DIR=/home/justin/openssl-3.1.2/include
 
-cargo build
+        export OPENSSL_DIR=/home/justin/openssl-3.1.2
+    export OPENSSL_NO_PKG_CONFIG=1
+    export OPENSSL_CONF=/home/justin/tokaysec/openssl.cnf
+    export LD_LIBRARY_PATH=/usr/local/lib64/ossl-modules/:$LD_LIBRARY_PATH
+    export OPENSSL_LIB_DIR=/home/justin/openssl-3.1.2
+    export OPENSSL_INCLUDE_DIR=/home/justin/openssl-3.1.2/include
 
-     */    
+    cargo build
+
+         */
     mem::forget(Provider::load(None, "fips").unwrap());
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
@@ -128,50 +127,63 @@ cargo build
         .wrap_dek(_dek, "super-secret-name")
         .await
         .unwrap();
-    let _dek = kek_provider
-        .unwrap_dek(&wrapped_key, dek_nonce, tag, "super-secret-name")
-        .await;
+    // let _dek = kek_provider
+    //     .unwrap_dek(&wrapped_key, dek_nonce, tag, "super-secret-name")
+    //     .await;
     //drop(_dek);
-    println!(
-        "{:?} {:?} {:?} {:?} {:?}",
-        ciphertext, nonce, wrapped_key, dek_nonce, aad
-    );
+    let secret = StoredSecret {
+        name: String::from("new-secret"),
+        version: String::from("v0.1.0"),
+        id: String::from("1234"),
+        secret_object: StoredSecretObject {
+            ciphertext,
+            kmac_tag: kmac_tag.to_vec(),
+            gcm_tag: gcm_tag.to_vec(),
+            wrapped_dek: wrapped_key,
+            nonce: nonce.to_vec(),
+        },
+    };
+    println!("{:?}", serde_json::to_string(&secret));
+    // println!(
+    //     "{:?} {:?} {:?} {:?} {:?}",
+    //     ciphertext, nonce, wrapped_key, dek_nonce, aad
+    // );
     // End encryption section
 
     // Decrypt∂
     // Split start
-    let dek = _dek.expose();
-    let mut aes_key = [0u8; 32];
-    let mut kmac_key = [0u8; 32];
+    // let dek = _dek.expose();
+    // let mut aes_key = [0u8; 32];
+    // let mut kmac_key = [0u8; 32];
 
-    let hk = Hkdf::<Sha3_384>::new(None, dek);
-    hk.expand(b"AES-256-GCM", &mut aes_key).unwrap();
-    hk.expand(b"KMAC-256", &mut kmac_key).unwrap();
-    // Split end
-    // Compute kmac
-    let mut mac = Kmac::v256(&kmac_key, &[]);
-    for chunk in &[&ciphertext, &aad] {
-        mac.update(chunk);
-    }
-    // KMAC-256 over ciphertext + AAD
-    let mut computed_kmac_tag = [0u8; 32];
-    mac.finalize(&mut computed_kmac_tag);
-    // Compute kmac end
-    // Compare start
-    if kmac_tag.ct_ne(&computed_kmac_tag).into() {
-        panic!("mismatch: {:?} != {:?}", kmac_tag, computed_kmac_tag);
-    }
+    // let hk = Hkdf::<Sha3_384>::new(None, dek);
+    // hk.expand(b"AES-256-GCM", &mut aes_key).unwrap();
+    // hk.expand(b"KMAC-256", &mut kmac_key).unwrap();
+    // // Split end
+    // // Compute kmac
+    // let mut mac = Kmac::v256(&kmac_key, &[]);
+    // for chunk in &[&ciphertext, &aad] {
+    //     mac.update(chunk);
+    // }
+    // // KMAC-256 over ciphertext + AAD
+    // let mut computed_kmac_tag = [0u8; 32];
+    // mac.finalize(&mut computed_kmac_tag);
+    // // Compute kmac end
+    // // Compare start
+    // if kmac_tag.ct_ne(&computed_kmac_tag).into() {
+    //     panic!("mismatch: {:?} != {:?}", kmac_tag, computed_kmac_tag);
+    // }
 
-    let plaintext = decrypt_aead(
-        Cipher::aes_256_gcm(),
-        &aes_key,
-        Some(&nonce),
-        &aad,
-        &ciphertext,
-        &gcm_tag,
-    )
-    .unwrap();
-    // decipher end
-    let value = Zeroizing::new(plaintext);
-    println!("{:?}", String::from_utf8(value.to_vec()));
+    // let plaintext = decrypt_aead(
+    //     Cipher::aes_256_gcm(),
+    //     &aes_key,
+    //     Some(&nonce),
+    //     &aad,
+    //     &ciphertext,
+    //     &gcm_tag,
+    // )
+    // .unwrap();
+    // // decipher end
+    // let value = Zeroizing::new(plaintext);
+    // println!("{:?}", String::from_utf8(value.to_vec()));
 }

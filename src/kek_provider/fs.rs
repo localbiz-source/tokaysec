@@ -1,8 +1,11 @@
+use std::io::Write;
+
 use aes_gcm::aead::Payload;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, Params, PasswordHasher};
 use openssl::symm::{Cipher, decrypt_aead, encrypt_aead};
 use ring::rand::SecureRandom;
+use zeroize::Zeroize;
 
 use crate::{kek_provider::KekProvider, secure_buf::SecureBuffer};
 use aes_gcm::{
@@ -24,31 +27,40 @@ impl KekProvider for FileSystemKEKProvider {
         println!("************************************************************************");
         println!("************************************************************************");
         println!(
-"
+            "
 USING THE FILE SYSTEM KEK PROVIDER IS HIGHLY INSECURE. 
 CONSIDER USING A CLOUD PROVIDER OR THE TOKAY-KMS. THIS
 IS MEANT FOR TESTING PURPOSES ONLY.
-");
-        println!("************************************************************************");
-        println!("************************************************************************");
-        println!("************************************************************************");
-        let salt = SaltString::generate(&mut OsRng);
-
-        // Derive KEK with Argon2id
-        let argon2 = Argon2::new(
-            argon2::Algorithm::Argon2id,
-            argon2::Version::V0x13,
-            Params::new(65536, 3, 4, Some(32)).unwrap(),
+"
         );
+        println!("************************************************************************");
+        println!("************************************************************************");
+        println!("************************************************************************");
+        println!("* Checking if KEK already exists on fs.");
+        let kek = if std::fs::exists("./kek/kek.key").unwrap_or(false) {
+            println!("* Found KEK already on file system. Loading and then removing.");
+            let mut file = std::fs::read("./kek/kek.key").unwrap();
+            let kek = SecureBuffer::from_slice(&file).unwrap();
+            file.zeroize();
+            kek
+        } else {
+            println!("* KEK does not exists, generating now.");
 
-        let hash = argon2
-            .hash_password(b"justincatmeow".as_ref(), &salt)
-            .unwrap();
-        let kek_bytes = hash.hash.unwrap();
+            let salt = SaltString::generate(&mut OsRng);
 
-        // Store KEK in secure buffer
-        let kek = SecureBuffer::from_slice(kek_bytes.as_bytes()).unwrap();
+            // Derive KEK with Argon2id
+            let argon2 = Argon2::new(
+                argon2::Algorithm::Argon2id,
+                argon2::Version::V0x13,
+                Params::new(65536, 3, 4, Some(32)).unwrap(),
+            );
 
+            let hash = argon2
+                .hash_password(b"justincatmeow".as_ref(), &salt)
+                .unwrap();
+            let kek_bytes = hash.hash.unwrap();
+            SecureBuffer::from_slice(kek_bytes.as_bytes()).unwrap()
+        };
         return Self { _kek: kek };
     }
     async fn unwrap_dek<'a>(
@@ -89,5 +101,14 @@ IS MEANT FOR TESTING PURPOSES ONLY.
         .unwrap();
         drop(dek);
         Ok((ciphertext, nonce, tag))
+    }
+}
+
+impl Drop for FileSystemKEKProvider {
+    fn drop(&mut self) {
+        let mut kek_file = std::fs::OpenOptions::new().create(true).write(true).open("./kek/kek.key").unwrap();
+        let mut kek_buffer = &mut self._kek.expose();
+        kek_file.write_all(&mut kek_buffer).unwrap();
+        drop(kek_file);
     }
 }
