@@ -10,7 +10,7 @@ pub struct PolicyAllowed {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PolicyDefineRole {
     pub name: String,
-    pub permissions: Option<Vec<String>>
+    pub permissions: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
