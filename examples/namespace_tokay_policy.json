@@ -1,8 +1,8 @@
 {
     "scope": "namespace",
-    "people": [
-        "jharris"
-    ],
+    "allowed": {
+        "people": ["jharris"]
+    },
     "roles": [
         {
             "name": "namespace_role",

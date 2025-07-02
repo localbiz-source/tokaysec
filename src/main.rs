@@ -7,10 +7,10 @@ mod engines;
 mod flags;
 mod kek_provider;
 mod models;
+mod policies;
+mod routes;
 mod secure_buf;
 mod templated_config;
-mod routes;
-mod policies;
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -39,6 +39,7 @@ use crate::{
     engines::key_value::KeyValueEngine,
     kek_provider::{KekProvider, fs::FileSystemKEKProvider},
     models::{StoredSecret, StoredSecretObject},
+    policies::BasePolciy,
     secure_buf::SecureBuffer,
 };
 
@@ -78,28 +79,40 @@ async fn main() {
     cargo build
 
          */
+
+    let s_policy = std::fs::read_to_string("./examples/secret_tokay_policy.json").unwrap();
+    let p_policy = std::fs::read_to_string("./examples/project_tokay_policy.json").unwrap();
+    let n_policy = std::fs::read_to_string("./examples/namespace_tokay_policy.json").unwrap();
+    let i_policy = std::fs::read_to_string("./examples/instance_tokay_policy.json").unwrap();
+    println!(
+        "{:#?}\n\n{:#?}\n\n{:#?}\n\n{:#?}\n\n",
+        serde_json::from_str::<BasePolciy>(&s_policy),
+        serde_json::from_str::<BasePolciy>(&p_policy),
+        serde_json::from_str::<BasePolciy>(&n_policy),
+        serde_json::from_str::<BasePolciy>(&i_policy)
+    );
     mem::forget(Provider::load(None, "fips").unwrap());
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
-    let db = Arc::new(
-        Database::init(&config.postgres, &config.migrations)
-            .await
-            .unwrap(),
-    );
+    // let db = Arc::new(
+    //     Database::init(&config.postgres, &config.migrations)
+    //         .await
+    //         .unwrap(),
+    // );
     let kek_provider = match config.kek.provider.as_str() {
         "fs" => FileSystemKEKProvider::init(),
         unknown @ _ => panic!("Unknown KEK provider set in config file: {:?}", unknown),
     };
     let key_value_engine = KeyValueEngine::init().await.unwrap();
-    let app = App::init(db).await;
-    println!(
-        "{:?}",
-        key_value_engine
-            .get_secret(&app, "new-secret")
-            .await
-            .unwrap()
-            .id
-    );
+    // let app = App::init(db).await;
+    // println!(
+    //     "{:?}",
+    //     key_value_engine
+    //         .get_secret(&app, "new-secret")
+    //         .await
+    //         .unwrap()
+    //         .id
+    // );
     // let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
     // // Generate deks
     // let mut _dek: SecureBuffer = SecureBuffer::new(32).unwrap();
