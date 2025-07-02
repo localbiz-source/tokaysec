@@ -32,3 +32,10 @@ raise an issue for more. boilerplate code for now.
 ### KMS
 
 The provided TokayKMS is ...
+
+### Policies
+
+Roles can be scoped to three levels: instance, namespace and project. When you define a role on a namespace or project level,
+the role will automatically have the project/namespace name appended to the start with a `-`. That way, in resulting policies,
+you'd reference them such as `<namespace>-<role>`. Instance level roles will **never** have a `<scope name>-` prefix unless manually
+defined during creation. 

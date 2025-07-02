@@ -1,0 +1,17 @@
+{
+    "scope": "project",
+    "roles": [
+        {
+            "name": "project_level_role",
+            "permissions": []
+        }
+    ],
+    "allowed": {
+        "people": [
+            "jharris"
+        ],
+        "roles": [
+            "namespace_role"
+        ]
+    }
+}

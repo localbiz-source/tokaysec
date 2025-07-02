@@ -15,5 +15,5 @@ pub struct StoredSecret {
     pub key: String,
     //pub version: String,
     pub id: String,
-    pub secret: serde_json::Value//StoredSecretObject,
+    pub secret: serde_json::Value,
 }

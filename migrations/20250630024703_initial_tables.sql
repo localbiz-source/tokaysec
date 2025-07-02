@@ -2,9 +2,24 @@
 
 CREATE SCHEMA IF NOT EXISTS tokaysec;
 
-CREATE TABLE IF NOT EXISTS tokaysec.kv_store (
+CREATE TABLE IF NOT EXISTS tokaysec.policy {
+    -- Policy Metadata
     "id" TEXT NOT NULL UNIQUE PRIMARY KEY,
-    "key" TEXT NOT NULL,
-    "secret" JSONB NOT NULL,
+    "created_when" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+    "last_updated" TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+};
+
+CREATE TABLE IF NOT EXISTS tokaysec.people (
+    "id" TEXT NOT NULL UNIQUE PRIMARY KEY,
+    "name" TEXT NOT NULL UNIQUE,
+    "flags" BIGINT NOT NULL DEFAULT 0,
+    "created_when" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+);
+
+CREATE TABLE IF NOT EXISTS tokaysec.credentials (
+    "id" TEXT UNIQUE NOT NULL PRIMARY KEY,
+    "owner" TEXT NOT NULL REFERENCES tokaysec.people("id") ON DELETE CASCADE,
+    "public_key" BYTEA NOT NULL UNIQUE,
+    "count" INT NOT NULL DEFAULT 0,
     "created_when" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
 );

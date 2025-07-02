@@ -1,4 +1,5 @@
 mod app;
+mod audit;
 mod config;
 mod db;
 mod dek;
@@ -8,6 +9,8 @@ mod kek_provider;
 mod models;
 mod secure_buf;
 mod templated_config;
+mod routes;
+mod policies;
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -38,7 +41,6 @@ use crate::{
     models::{StoredSecret, StoredSecretObject},
     secure_buf::SecureBuffer,
 };
-use tiny_keccak::{Hasher, Kmac};
 
 #[tokio::main]
 async fn main() {
@@ -47,16 +49,16 @@ async fn main() {
     unsafe {
         std::env::set_var(
             "OPENSSL_MODULES",
-            "/usr/local/lib64/ossl-modules", //"/Users/justin/openssl-fips/lib/ossl-modules",
+            "/Users/justin/openssl-fips/lib/ossl-modules", //"/usr/local/lib64/ossl-modules",
         )
     };
-    unsafe { std::env::set_var("OPENSSL_CONF", "/home/justin/tokaysec/openssl.cnf") }; //"/Users/justin/openssl-fips/ssl/openssl.cnf") };
-    // unsafe {
-    //     std::env::set_var(12
-    //         "DYLD_LIBRARY_PATH",
-    //         "/Users/justin/openssl-fips/lib/ossl-modules:$DYLD_LIBRARY_PATH",
-    //     )
-    // };
+    unsafe { std::env::set_var("OPENSSL_CONF", "/Users/justin/openssl-fips/ssl/openssl.cnf") }; //"/Users/justin/openssl-fips/ssl/openssl.cnf") }; // "/home/justin/tokaysec/openssl.cnf"
+    unsafe {
+        std::env::set_var(
+            "DYLD_LIBRARY_PATH",
+            "/Users/justin/openssl-fips/lib/ossl-modules:$DYLD_LIBRARY_PATH",
+        )
+    };
     unsafe {
         std::env::set_var(
             "LD_LIBRARY_PATH",
@@ -95,7 +97,8 @@ async fn main() {
         key_value_engine
             .get_secret(&app, "new-secret")
             .await
-            .unwrap().id
+            .unwrap()
+            .id
     );
     // let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
     // // Generate deks
@@ -150,21 +153,20 @@ async fn main() {
     // //     .unwrap_dek(&wrapped_key, dek_nonce, tag, "super-secret-name")
     // //     .await;
     // //drop(_dek);
-    // let secret = StoredSecret {
-    //     name,
-    //     version: String::from("v0.1.0"),
-    //     id,
-    //     secret_object: StoredSecretObject {
-    //         ciphertext,
-    //         kmac_tag: kmac_tag.to_vec(),
-    //         gcm_tag: gcm_tag.to_vec(),
-    //         wrapped_dek: wrapped_key,
-    //         nonce: nonce.to_vec(),
-    //     },
-    // };
 
     // let seet = key_value_engine
-    //     .store_secret(&app, "new-secret", secret)
+    //     .store_secret(
+    //         &app,
+    //         "new-secret",
+    //         &id,
+    //         StoredSecretObject {
+    //             ciphertext,
+    //             kmac_tag: kmac_tag.to_vec(),
+    //             gcm_tag: gcm_tag.to_vec(),
+    //             wrapped_dek: wrapped_key,
+    //             nonce: nonce.to_vec(),
+    //         },
+    //     )
     //     .await
     //     .unwrap();
     // println!(

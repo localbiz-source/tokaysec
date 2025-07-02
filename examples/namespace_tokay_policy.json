@@ -1,0 +1,15 @@
+{
+    "scope": "namespace",
+    "people": [
+        "jharris"
+    ],
+    "roles": [
+        {
+            "name": "namespace_role",
+            "permissions": [
+                "read:secrets",
+                "write:secrets"
+            ]
+        }
+    ]
+}
