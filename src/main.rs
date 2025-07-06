@@ -84,17 +84,6 @@ async fn main() {
 
          */
 
-    // let s_policy = std::fs::read_to_string("./examples/secret_tokay_policy.json").unwrap();
-    // let p_policy = std::fs::read_to_string("./examples/project_tokay_policy.json").unwrap();
-    // let n_policy = std::fs::read_to_string("./examples/namespace_tokay_policy.json").unwrap();
-    // let i_policy = std::fs::read_to_string("./examples/instance_tokay_policy.json").unwrap();
-    // println!(
-    //     "{:#?}\n\n{:#?}\n\n{:#?}\n\n{:#?}\n\n",
-    //     serde_json::from_str::<BasePolicy>(&s_policy),
-    //     serde_json::from_str::<BasePolicy>(&p_policy),
-    //     serde_json::from_str::<BasePolicy>(&n_policy),
-    //     serde_json::from_str::<BasePolicy>(&i_policy)
-    // );
     mem::forget(Provider::load(None, "fips").unwrap());
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
