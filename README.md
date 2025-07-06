@@ -39,3 +39,7 @@ Roles can be scoped to three levels: instance, namespace and project. When you d
 the role will automatically have the project/namespace name appended to the start with a `-`. That way, in resulting policies,
 you'd reference them such as `<namespace>-<role>`. Instance level roles will **never** have a `<scope name>-` prefix unless manually
 defined during creation. 
+
+### Trust
+
+All API requests involving **secrets**, **keys**, or **templated config w/ secrets** must be made with mTLS + appropriate access keys with sufficient permissions to access the secret, project & namespace. The to create secrets, configs, etc. all that is required is an access key with sufficient permissions. Any A2A (application-to-application) requests MUST be made with mTLS, and a access key with sufficient access.
