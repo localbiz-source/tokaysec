@@ -20,7 +20,7 @@ pub struct PolicyDefinePeople {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BasePolciy {
+pub struct BasePolicy {
     pub scope: String,
     pub allowed: Option<PolicyAllowed>,
     #[serde(rename(deserialize = "roles"))]

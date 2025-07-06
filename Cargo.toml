@@ -65,3 +65,4 @@ reqwest = { version = "0.12.15", features = [
     "deflate",
     "rustls-tls-webpki-roots",
 ] }
+chrono = { version = "0.4.38", features = ["serde"] }

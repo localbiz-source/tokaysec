@@ -3,8 +3,6 @@ mod audit;
 mod config;
 mod db;
 mod dek;
-mod engines;
-mod flags;
 mod kek_provider;
 mod models;
 mod policies;
@@ -16,8 +14,10 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, KeyInit, OsRng, Payload, rand_core::RngCore},
 };
+use chrono::format;
 use hkdf::Hkdf;
 use openssl::{
+    conf,
     provider::Provider,
     symm::{Cipher, decrypt_aead, encrypt_aead},
 };
@@ -28,23 +28,27 @@ use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
 };
 use sqlx::{Pool, Postgres};
-use std::{mem, sync::Arc};
+use std::{io::Read, mem, sync::Arc};
 use subtle::ConstantTimeEq;
+use tracing::info;
 use zeroize::Zeroizing;
 
 use crate::{
     app::App,
     config::Config,
     db::Database,
-    engines::key_value::KeyValueEngine,
     kek_provider::{KekProvider, fs::FileSystemKEKProvider},
     models::{StoredSecret, StoredSecretObject},
-    policies::BasePolciy,
+    policies::BasePolicy,
     secure_buf::SecureBuffer,
 };
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     // Enable OpenSSL fips mode. We want to use FIPS approved modules
     // only and in specific AES-256-GCM amongst others.
     unsafe {
@@ -86,25 +90,116 @@ async fn main() {
     let i_policy = std::fs::read_to_string("./examples/instance_tokay_policy.json").unwrap();
     println!(
         "{:#?}\n\n{:#?}\n\n{:#?}\n\n{:#?}\n\n",
-        serde_json::from_str::<BasePolciy>(&s_policy),
-        serde_json::from_str::<BasePolciy>(&p_policy),
-        serde_json::from_str::<BasePolciy>(&n_policy),
-        serde_json::from_str::<BasePolciy>(&i_policy)
+        serde_json::from_str::<BasePolicy>(&s_policy),
+        serde_json::from_str::<BasePolicy>(&p_policy),
+        serde_json::from_str::<BasePolicy>(&n_policy),
+        serde_json::from_str::<BasePolicy>(&i_policy)
     );
     mem::forget(Provider::load(None, "fips").unwrap());
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
-    // let db = Arc::new(
-    //     Database::init(&config.postgres, &config.migrations)
-    //         .await
-    //         .unwrap(),
-    // );
-    let kek_provider = match config.kek.provider.as_str() {
+    let db = Arc::new(
+        Database::init(&config.postgres, &config.migrations)
+            .await
+            .unwrap(),
+    );
+    let app = Arc::new(App::init(db).await);
+    // This will be your first introduction to rust!! YAYY!!
+    // for singular values with sqlx I only know of the (<type>,) trick
+    // so this generic function will have to do.
+    if !app
+        .get_config_value::<bool>("intially_initialized")
+        .await
+        .unwrap_or(false)
+    {
+        let instance_id = app.gen_id().await;
+        app.set_config_value("instance_id", instance_id)
+            .await
+            .unwrap();
+        info!("Initializing the app for the first time...Please hold.");
+        let admin_person = app.create_person("admin").await.unwrap();
+        info!("Created admin person with ID: {:?}", admin_person.id);
+        // Save the id of the admin account. They can change the name
+        // do whatever they want as long as we have the account id.
+        app.set_config_value("admin_account_id", admin_person.id.to_owned())
+            .await
+            .unwrap();
+        let default_role = app
+            .create_role("default", &admin_person.id, app::ScopeLevel::Instance)
+            .await
+            .unwrap();
+        let default_project = app.create_project("default_projcet").await.unwrap();
+        let default_namespace = app.create_namespace("default_namespace").await.unwrap();
+        app.create_resource_assignment(
+            &format!("nmsp:{}", &default_namespace.id),
+            &format!("proj:{}", &default_project.id),
+            &admin_person.id,
+        )
+        .await
+        .unwrap();
+
+        // these permissions are "hard coded" in actions however but later on
+        // I think i am going to make a custom permissions bs...ENTERPRISE EDITION!! jk
+        // secret related
+        let perm_groups = ["secrets", "config", "pki"];
+        let target = format!("role:{}", &default_role.id);
+        for perm_group in perm_groups {
+            let read_p = app
+                .create_permission(&format!("read:{perm_group}"))
+                .await
+                .unwrap();
+            let write_p = app
+                .create_permission(&format!("write:{perm_group}"))
+                .await
+                .unwrap();
+            app.create_resource_assignment(
+                &target,
+                &format!("perm:{}", &read_p.id),
+                &admin_person.id,
+            )
+            .await
+            .unwrap();
+            app.create_resource_assignment(
+                &target,
+                &format!("perm:{}", &write_p.id),
+                &admin_person.id,
+            )
+            .await
+            .unwrap();
+        }
+        // some special perms...for special things
+        let manage_ca = app.create_permission(&format!("manage:ca")).await.unwrap();
+        // this includes revoking shit and alat. The pki above is everything BUT these two
+        let manage_crl = app.create_permission(&format!("manage:crl")).await.unwrap();
+        app.create_resource_assignment(
+            &target,
+            &format!("perm:{}", &manage_ca.id),
+            &admin_person.id,
+        )
+        .await
+        .unwrap();
+        app.create_resource_assignment(
+            &target,
+            &format!("perm:{}", &manage_crl.id),
+            &admin_person.id,
+        )
+        .await
+        .unwrap();
+        // pki related
+        // Now that everything has intialized we will set this true.
+        app.set_config_value("intially_initialized", true)
+            .await
+            .unwrap();
+        info!("Initial initialization is complete!");
+    }
+    /*
+        let kek_provider = match config.kek.provider.as_str() {
         "fs" => FileSystemKEKProvider::init(),
         unknown @ _ => panic!("Unknown KEK provider set in config file: {:?}", unknown),
     };
-    let key_value_engine = KeyValueEngine::init().await.unwrap();
-    // let app = App::init(db).await;
+
+     */
+    //app.database.create_person(app.to_owned(), "jharris").await;
     // println!(
     //     "{:?}",
     //     key_value_engine
