@@ -3,6 +3,13 @@ name = "tokaysec"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = [
+    ".",
+    "kms"
+]
+
+
 [dependencies]
 security-framework = "3.2.0"
 openssl = { version = "0.10.73", features = ["vendored"] }

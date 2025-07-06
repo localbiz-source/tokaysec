@@ -1,6 +1,7 @@
 use crate::secure_buf::SecureBuffer;
 
 pub mod fs;
+pub mod tokaykms;
 
 #[async_trait::async_trait]
 pub trait KekProvider {
