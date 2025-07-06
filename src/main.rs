@@ -84,20 +84,35 @@ async fn main() {
 
          */
 
-    let s_policy = std::fs::read_to_string("./examples/secret_tokay_policy.json").unwrap();
-    let p_policy = std::fs::read_to_string("./examples/project_tokay_policy.json").unwrap();
-    let n_policy = std::fs::read_to_string("./examples/namespace_tokay_policy.json").unwrap();
-    let i_policy = std::fs::read_to_string("./examples/instance_tokay_policy.json").unwrap();
-    println!(
-        "{:#?}\n\n{:#?}\n\n{:#?}\n\n{:#?}\n\n",
-        serde_json::from_str::<BasePolicy>(&s_policy),
-        serde_json::from_str::<BasePolicy>(&p_policy),
-        serde_json::from_str::<BasePolicy>(&n_policy),
-        serde_json::from_str::<BasePolicy>(&i_policy)
-    );
+    // let s_policy = std::fs::read_to_string("./examples/secret_tokay_policy.json").unwrap();
+    // let p_policy = std::fs::read_to_string("./examples/project_tokay_policy.json").unwrap();
+    // let n_policy = std::fs::read_to_string("./examples/namespace_tokay_policy.json").unwrap();
+    // let i_policy = std::fs::read_to_string("./examples/instance_tokay_policy.json").unwrap();
+    // println!(
+    //     "{:#?}\n\n{:#?}\n\n{:#?}\n\n{:#?}\n\n",
+    //     serde_json::from_str::<BasePolicy>(&s_policy),
+    //     serde_json::from_str::<BasePolicy>(&p_policy),
+    //     serde_json::from_str::<BasePolicy>(&n_policy),
+    //     serde_json::from_str::<BasePolicy>(&i_policy)
+    // );
     mem::forget(Provider::load(None, "fips").unwrap());
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
+    if config.allow_kms_colocation {
+        info!("\x1B[1;31m************************************************************************\x1B[0m");
+        info!("\x1B[1;33m************************************************************************\x1B[0m");
+        info!("\x1B[1;31m************************************************************************\x1B[0m");
+        info!(
+            "\n
+\x1B[1;31mONLY ALLOW KMS CO-LOCATION IF THEY ARE RUNNING IN A TIGHT SECURE
+ENVIRONMENT OR IF YOU ARE TESTING. PREFER TO HOST KMS ON ANOTHER
+HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
+"
+        );
+        info!("\x1B[1;31m************************************************************************\x1B[0m");
+        info!("\x1B[1;33m************************************************************************\x1B[0m");
+        info!("\x1B[1;31m************************************************************************\x1B[0m");
+    }
     let db = Arc::new(
         Database::init(&config.postgres, &config.migrations)
             .await

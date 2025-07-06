@@ -6,10 +6,17 @@ pub struct KekConfig {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(tag = "provider")]
+pub enum KMSProviders {
+    TokayKMS { host: String, port: u16 },
+}
+#[derive(Serialize, Deserialize)]
 pub struct Config {
     pub kek: KekConfig,
+    pub kms: KMSProviders,
     pub migrations: String,
     pub postgres: String,
+    pub allow_kms_colocation: bool
 }
 
 // Deny / Allow list is a list of

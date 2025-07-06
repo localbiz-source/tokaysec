@@ -5,6 +5,7 @@ use argon2::password_hash::SaltString;
 use argon2::{Argon2, Params, PasswordHasher};
 use openssl::symm::{Cipher, decrypt_aead, encrypt_aead};
 use ring::rand::SecureRandom;
+use tracing::info;
 use zeroize::Zeroize;
 
 use crate::{kek_provider::KekProvider, secure_buf::SecureBuffer};
@@ -23,28 +24,28 @@ impl KekProvider for FileSystemKEKProvider {
     where
         Self: Sized,
     {
-        println!("************************************************************************");
-        println!("************************************************************************");
-        println!("************************************************************************");
-        println!(
+        info!("************************************************************************");
+        info!("************************************************************************");
+        info!("************************************************************************");
+        info!(
             "
-USING THE FILE SYSTEM KEK PROVIDER IS HIGHLY INSECURE. 
+\x1B[1;31mUSING THE FILE SYSTEM KEK PROVIDER IS HIGHLY INSECURE. 
 CONSIDER USING A CLOUD PROVIDER OR THE TOKAY-KMS. THIS
-IS MEANT FOR TESTING PURPOSES ONLY.
+IS MEANT FOR TESTING PURPOSES ONLY.\x1B[0m
 "
         );
-        println!("************************************************************************");
-        println!("************************************************************************");
-        println!("************************************************************************");
-        println!("* Checking if KEK already exists on fs.");
+        info!("************************************************************************");
+        info!("************************************************************************");
+        info!("************************************************************************");
+        info!("Checking if KEK already exists on fs.");
         let kek = if std::fs::exists("./kek/kek.key").unwrap_or(false) {
-            println!("* Found KEK already on file system. Loading and then removing.");
+            info!("Found KEK already on file system. Loading and then removing.");
             let mut file = std::fs::read("./kek/kek.key").unwrap();
             let kek = SecureBuffer::from_slice(&file).unwrap();
             file.zeroize();
             kek
         } else {
-            println!("* KEK does not exists, generating now.");
+            info!("* KEK does not exists, generating now.");
 
             let salt = SaltString::generate(&mut OsRng);
 
