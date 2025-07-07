@@ -9,10 +9,11 @@ pub struct KekConfig {
 #[serde(tag = "provider")]
 pub enum KMSProviders {
     TokayKMS { host: String, port: u16 },
+    Fs
 }
+
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-    pub kek: KekConfig,
     pub kms: KMSProviders,
     pub migrations: String,
     pub postgres: String,

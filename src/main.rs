@@ -54,10 +54,10 @@ async fn main() {
     unsafe {
         std::env::set_var(
             "OPENSSL_MODULES",
-            "/Users/justin/openssl-fips/lib/ossl-modules", //"/usr/local/lib64/ossl-modules",
+            "/usr/local/lib64/ossl-modules"//"/Users/justin/openssl-fips/lib/ossl-modules", //"/usr/local/lib64/ossl-modules",
         )
     };
-    unsafe { std::env::set_var("OPENSSL_CONF", "/Users/justin/openssl-fips/ssl/openssl.cnf") }; //"/Users/justin/openssl-fips/ssl/openssl.cnf") }; // "/home/justin/tokaysec/openssl.cnf"
+    unsafe { std::env::set_var("OPENSSL_CONF", "/home/justin/tokaysec/openssl.cnf") }; //"/Users/justin/openssl-fips/ssl/openssl.cnf") }; // "/home/justin/tokaysec/openssl.cnf"
     unsafe {
         std::env::set_var(
             "DYLD_LIBRARY_PATH",

@@ -2,9 +2,6 @@ postgres = "postgres://<username>:<password>@<host>:<port>/<database>"
 migrations = "./migrations"
 allow_kms_colocation = true
 
-[kek]
-provider = "fs"
-
 [kms]
 provider = "TokayKMS"
 host = "0.0.0.0"
