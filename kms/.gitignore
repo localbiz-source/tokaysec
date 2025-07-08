@@ -1,3 +1,6 @@
 /target
+/target
 Config.toml
 tokaykms.sqlite
+*.sqlite-journal
+*.sqlite-wal
