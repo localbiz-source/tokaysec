@@ -188,7 +188,7 @@ pub async fn initialize_kek(
         ctx.flush_context(primary.key_handle.into()).unwrap();
 
         let id = sqlx::query_as::<_, (String,)>(r#"INSERT INTO kek_store(id,wrapped_kek,persistent_handle,wrapped_priv_key,wrapped_pub_key) VALUES($1,$2,$3,$4,$5) RETURNING id"#)
-        .bind(&id).bind(vec![]).bind(available.unwrap()).bind(enc_private.value())
+        .bind(&id).bind(wrapped_kek.value()).bind(available.unwrap()).bind(enc_private.value())
         .bind(public.marshall().unwrap()).fetch_one(&app.database).await.unwrap();
         return (StatusCode::OK, json!({"id": id.0}).to_string()).into_response();
     }
@@ -210,22 +210,39 @@ pub async fn wrap_dek(
         let ctx = ctx.to_owned();
         let mut ctx = ctx.lock().await;
 
-        let (wrapped_pub_key,) = sqlx::query_as::<_, (Vec<u8>,)>(
-            r#"SELECT wrapped_pub_key FROM kek_store WHERE id = ($1)"#,
+        let (wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle) = sqlx::query_as::<_, (Vec<u8>, Vec<u8>, Vec<u8>, i32)>(
+            r#"SELECT wrapped_pub_key, wrapped_priv_key, wrapped_kek FROM kek_store WHERE id = ($1)"#,
         )
         .bind(wrap_deq_request.kek)
         .fetch_one(&app.database)
         .await
         .unwrap();
-        // TODO: we need to decrypt the SELECTED kek. 
+        // TODO: we need to decrypt the SELECTED kek.
         // then encrypt the DEK then zeroize and all that the kek, dek memory
         // then return wrapped DEK ciphertext
-        
-        // let p_handle = PersistentTpmHandle::new(kek.persistent_handle.try_into().unwrap()).unwrap();
-        // let o_handle = ctx
-        //     .tr_from_tpm_public(tss_esapi::handles::TpmHandle::Persistent(p_handle))
-        //     .unwrap();
+
+        let p_handle = PersistentTpmHandle::new(persistent_handle.try_into().unwrap()).unwrap();
+        let o_handle = ctx
+            .tr_from_tpm_public(tss_esapi::handles::TpmHandle::Persistent(p_handle))
+            .unwrap();
+
         let public_key = Public::unmarshall(&wrapped_pub_key).unwrap();
+        let private_key = Private::try_from(wrapped_priv_key).unwrap();
+        let decrypted_data = ctx
+            .execute_with_nullauth_session(|ctx| {
+                let rsa_priv_key = ctx
+                    .load(o_handle.into(), private_key.clone(), public_key.clone())
+                    .unwrap();
+
+                let decrypted = ctx.rsa_decrypt(
+                    rsa_priv_key,
+                    PublicKeyRsa::try_from(wrapped_kek).unwrap(),
+                    RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha1)),
+                    Data::default(),
+                );
+                decrypted
+            })
+            .unwrap();
 
         let data_to_encrypt = PublicKeyRsa::try_from(wrap_deq_request.dek).unwrap();
 
