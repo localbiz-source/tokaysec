@@ -21,6 +21,7 @@ use rand::{
     seq::{IteratorRandom, SliceRandom},
 };
 use reqwest::StatusCode;
+use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use snowflaked::Generator;
@@ -33,9 +34,10 @@ use sqlx::{
 use tokio::sync::Mutex;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
-use tss_esapi::constants::{CapabilityType, PropertyTag};
+use tss_esapi::constants::{CapabilityType, PropertyTag, Tss2ResponseCode};
 use tss_esapi::interface_types::algorithm::{AsymmetricAlgorithm, RsaSchemeAlgorithm};
-use tss_esapi::structures::{CapabilityData, PublicParameters, PublicRsaParameters};
+use tss_esapi::structures::{Auth, CapabilityData, PublicParameters, PublicRsaParameters};
+use tss_esapi::tss2_esys::ESYS_TR_RH_OWNER;
 use tss_esapi::{
     Context, TctiNameConf,
     attributes::ObjectAttributesBuilder,
@@ -82,13 +84,12 @@ pub async fn initialize_kek(
         // the create project button!
         let ctx = ctx.to_owned();
         let mut ctx = ctx.lock().await;
-
         let mut id_gen = app.id_gen.lock().await;
         let id = id_gen.generate::<i64>().to_string();
         drop(id_gen);
         // 0x81000000 to 0x81FFFFFF
         let existing_handles = match ctx
-            .get_capability(CapabilityType::Handles, PropertyTag::Permanent.into(), 256)
+            .get_capability(CapabilityType::Handles, 0x81000000, 256)
             .unwrap()
         {
             (CapabilityData::Handles(handles), _) => handles.to_vec(),
@@ -96,101 +97,103 @@ pub async fn initialize_kek(
         };
 
         let used: HashSet<u32> = existing_handles.iter().map(|h| (*h).into()).collect();
+        println!("{:?}", used);
         let available = (0x81000000..=0x81FFFFFF)
             .filter(|h| !used.contains(h))
             .choose(&mut rand::rngs::OsRng);
-
-        let primary = create_primary(&mut ctx);
-        ctx.execute_with_nullauth_session(|ctx| {
+        if let Some(available) = available {
+            let primary = create_primary(&mut ctx);
+            ctx.tr_set_auth(ESYS_TR_RH_OWNER.into(), Auth::default())
+                .unwrap();
             ctx.evict_control(
                 Provision::Owner,
                 primary.key_handle.into(),
                 tss_esapi::interface_types::dynamic_handles::Persistent::Persistent(
-                    PersistentTpmHandle::new(available.unwrap()).unwrap(),
+                    PersistentTpmHandle::new(available).unwrap(),
                 ),
             )
-        })
-        .unwrap();
-        let object_attributes = ObjectAttributesBuilder::new()
-            .with_fixed_tpm(true)
-            .with_fixed_parent(true)
-            .with_st_clear(false)
-            .with_sensitive_data_origin(true)
-            .with_user_with_auth(true)
-            // We need a key that can decrypt values - we don't need to worry
-            // about signatures.
-            .with_decrypt(true)
-            // Note that we don't set the key as restricted.
-            .build()
-            .expect("Failed to build object attributes");
-
-        let rsa_params = PublicRsaParametersBuilder::new()
-            // The value for scheme may have requirements set by a combination of the
-            // sign, decrypt, and restricted flags. For an unrestricted signing and
-            // decryption key then scheme must be NULL. For an unrestricted decryption key,
-            // NULL, OAEP or RSAES are valid for use.
-            .with_scheme(RsaScheme::Null)
-            .with_key_bits(RsaKeyBits::Rsa2048)
-            .with_exponent(RsaExponent::default())
-            .with_is_decryption_key(true)
-            // We don't require signatures, but some users may.
-            // .with_is_signing_key(true)
-            .with_restricted(false)
-            .build()
-            .expect("Failed to build rsa parameters");
-
-        let key_pub = PublicBuilder::new()
-            .with_public_algorithm(PublicAlgorithm::Rsa)
-            .with_name_hashing_algorithm(HashingAlgorithm::Sha256)
-            .with_object_attributes(object_attributes)
-            .with_rsa_parameters(rsa_params)
-            .with_rsa_unique_identifier(PublicKeyRsa::default())
-            .build()
             .unwrap();
-        let (enc_private, public) = ctx
-            .execute_with_nullauth_session(|ctx| {
-                ctx.create(primary.key_handle, key_pub, None, None, None, None)
-                    .map(|key| (key.out_private, key.out_public))
-            })
-            .unwrap();
-        let salt = SaltString::generate(&mut OsRng);
+            let object_attributes = ObjectAttributesBuilder::new()
+                .with_fixed_tpm(true)
+                .with_fixed_parent(true)
+                .with_st_clear(false)
+                .with_sensitive_data_origin(true)
+                .with_user_with_auth(true)
+                // We need a key that can decrypt values - we don't need to worry
+                // about signatures.
+                .with_decrypt(true)
+                // Note that we don't set the key as restricted.
+                .build()
+                .expect("Failed to build object attributes");
 
-        // Derive KEK with Argon2id
-        let argon2 = Argon2::new(
-            argon2::Algorithm::Argon2id,
-            argon2::Version::V0x13,
-            Params::new(65536, 3, 4, Some(32)).unwrap(),
-        );
+            let rsa_params = PublicRsaParametersBuilder::new()
+                // The value for scheme may have requirements set by a combination of the
+                // sign, decrypt, and restricted flags. For an unrestricted signing and
+                // decryption key then scheme must be NULL. For an unrestricted decryption key,
+                // NULL, OAEP or RSAES are valid for use.
+                .with_scheme(RsaScheme::Null)
+                .with_key_bits(RsaKeyBits::Rsa2048)
+                .with_exponent(RsaExponent::default())
+                .with_is_decryption_key(true)
+                // We don't require signatures, but some users may.
+                // .with_is_signing_key(true)
+                .with_restricted(false)
+                .build()
+                .expect("Failed to build rsa parameters");
 
-        let hash = argon2
-            .hash_password(b"justincatmeow".as_ref(), &salt)
-            .unwrap();
-        let kek_bytes = hash.hash.unwrap();
-        let data_to_encrypt = PublicKeyRsa::try_from(kek_bytes.as_bytes()).unwrap();
+            let key_pub = PublicBuilder::new()
+                .with_public_algorithm(PublicAlgorithm::Rsa)
+                .with_name_hashing_algorithm(HashingAlgorithm::Sha256)
+                .with_object_attributes(object_attributes)
+                .with_rsa_parameters(rsa_params)
+                .with_rsa_unique_identifier(PublicKeyRsa::default())
+                .build()
+                .unwrap();
+            let (enc_private, public) = ctx
+                .execute_with_nullauth_session(|ctx| {
+                    ctx.create(primary.key_handle, key_pub, None, None, None, None)
+                        .map(|key| (key.out_private, key.out_public))
+                })
+                .unwrap();
+            let salt = SaltString::generate(&mut OsRng);
 
-        let wrapped_kek = ctx
-            .execute_with_nullauth_session(|ctx| {
-                let rsa_pub_key = ctx
-                    .load_external_public(public.to_owned(), Hierarchy::Null)
-                    .unwrap();
+            // Derive KEK with Argon2id
+            let argon2 = Argon2::new(
+                argon2::Algorithm::Argon2id,
+                argon2::Version::V0x13,
+                Params::new(65536, 3, 4, Some(32)).unwrap(),
+            );
 
-                let encrypted = ctx.rsa_encrypt(
-                    rsa_pub_key,
-                    data_to_encrypt.clone(),
-                    RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha1)),
-                    Data::default(),
-                );
-                ctx.flush_context(rsa_pub_key.into()).unwrap();
-                encrypted
-            })
-            .unwrap();
+            let hash = argon2
+                .hash_password(b"justincatmeow".as_ref(), &salt)
+                .unwrap();
+            let kek_bytes = hash.hash.unwrap();
+            let data_to_encrypt = PublicKeyRsa::try_from(kek_bytes.as_bytes()).unwrap();
 
-        ctx.flush_context(primary.key_handle.into()).unwrap();
+            let wrapped_kek = ctx
+                .execute_with_nullauth_session(|ctx| {
+                    let rsa_pub_key = ctx
+                        .load_external_public(public.to_owned(), Hierarchy::Null)
+                        .unwrap();
 
-        let id = sqlx::query_as::<_, (String,)>(r#"INSERT INTO kek_store(id,wrapped_kek,persistent_handle,wrapped_priv_key,wrapped_pub_key) VALUES($1,$2,$3,$4,$5) RETURNING id"#)
-        .bind(&id).bind(wrapped_kek.value()).bind(available.unwrap()).bind(enc_private.value())
+                    let encrypted = ctx.rsa_encrypt(
+                        rsa_pub_key,
+                        data_to_encrypt.clone(),
+                        RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha1)),
+                        Data::default(),
+                    );
+                    ctx.flush_context(rsa_pub_key.into()).unwrap();
+                    encrypted
+                })
+                .unwrap();
+
+            ctx.flush_context(primary.key_handle.into()).unwrap();
+
+            let id = sqlx::query_as::<_, (String,)>(r#"INSERT INTO kek_store(id,wrapped_kek,persistent_handle,wrapped_priv_key,wrapped_pub_key) VALUES($1,$2,$3,$4,$5) RETURNING id"#)
+        .bind(&id).bind(wrapped_kek.value()).bind(available).bind(enc_private.value())
         .bind(public.marshall().unwrap()).fetch_one(&app.database).await.unwrap();
-        return (StatusCode::OK, json!({"id": id.0}).to_string()).into_response();
+            return (StatusCode::OK, json!({"id": id.0}).to_string()).into_response();
+        }
     }
     (StatusCode::INTERNAL_SERVER_ERROR).into_response()
 }
@@ -198,6 +201,7 @@ pub async fn initialize_kek(
 #[derive(Serialize, Deserialize)]
 pub struct WrapDEKRequest {
     pub dek: Vec<u8>,
+    pub secret_name: String,
     pub kek: String,
 }
 
@@ -211,7 +215,7 @@ pub async fn wrap_dek(
         let mut ctx = ctx.lock().await;
 
         let (wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle) = sqlx::query_as::<_, (Vec<u8>, Vec<u8>, Vec<u8>, i32)>(
-            r#"SELECT wrapped_pub_key, wrapped_priv_key, wrapped_kek FROM kek_store WHERE id = ($1)"#,
+            r#"SELECT wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle FROM kek_store WHERE id = ($1)"#,
         )
         .bind(wrap_deq_request.kek)
         .fetch_one(&app.database)
@@ -228,7 +232,7 @@ pub async fn wrap_dek(
 
         let public_key = Public::unmarshall(&wrapped_pub_key).unwrap();
         let private_key = Private::try_from(wrapped_priv_key).unwrap();
-        let decrypted_data = ctx
+        let decrypted_kek = ctx
             .execute_with_nullauth_session(|ctx| {
                 let rsa_priv_key = ctx
                     .load(o_handle.into(), private_key.clone(), public_key.clone())
@@ -243,29 +247,41 @@ pub async fn wrap_dek(
                 decrypted
             })
             .unwrap();
+        let mut nonce: [u8; 12] = [0; 12];
+        let sr = ring::rand::SystemRandom::new();
+        sr.fill(&mut nonce).unwrap();
+        let mut tag = [0u8; 16];
+        let ciphertext = encrypt_aead(
+            Cipher::aes_256_gcm(),
+            &decrypted_kek.to_vec(),
+            Some(&nonce),
+            &format!("secret:{}", wrap_deq_request.secret_name).as_bytes(),
+            &wrap_deq_request.dek,
+            &mut tag,
+        )
+        .unwrap();
+        // let data_to_encrypt = PublicKeyRsa::try_from(wrap_deq_request.dek).unwrap();
 
-        let data_to_encrypt = PublicKeyRsa::try_from(wrap_deq_request.dek).unwrap();
+        // let encrypted_data = ctx
+        //     .execute_with_nullauth_session(|ctx| {
+        //         let rsa_pub_key = ctx
+        //             .load_external_public(public_key.clone(), Hierarchy::Null)
+        //             .unwrap();
 
-        let encrypted_data = ctx
-            .execute_with_nullauth_session(|ctx| {
-                let rsa_pub_key = ctx
-                    .load_external_public(public_key.clone(), Hierarchy::Null)
-                    .unwrap();
-
-                let encrypted = ctx.rsa_encrypt(
-                    rsa_pub_key,
-                    data_to_encrypt.clone(),
-                    RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha1)),
-                    Data::default(),
-                );
-                ctx.flush_context(rsa_pub_key.into()).unwrap();
-                encrypted
-            })
-            .unwrap();
+        //         let encrypted = ctx.rsa_encrypt(
+        //             rsa_pub_key,
+        //             data_to_encrypt.clone(),
+        //             RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha1)),
+        //             Data::default(),
+        //         );
+        //         ctx.flush_context(rsa_pub_key.into()).unwrap();
+        //         encrypted
+        //     })
+        //     .unwrap();
         return (
             StatusCode::OK,
             json!({
-                "wrapped_dek": encrypted_data.to_vec()
+                "wrapped_dek": ciphertext.to_vec()
             })
             .to_string(),
         )
