@@ -34,7 +34,8 @@ use sqlx::{
 use tokio::sync::Mutex;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
-use tss_esapi::constants::{CapabilityType, PropertyTag, Tss2ResponseCode};
+use tss_esapi::constants::{CapabilityType, PropertyTag, SessionType, Tss2ResponseCode};
+use tss_esapi::handles::ObjectHandle;
 use tss_esapi::interface_types::algorithm::{AsymmetricAlgorithm, RsaSchemeAlgorithm};
 use tss_esapi::structures::{Auth, CapabilityData, PublicParameters, PublicRsaParameters};
 use tss_esapi::tss2_esys::ESYS_TR_RH_OWNER;
@@ -78,14 +79,34 @@ pub async fn initialize_kek(
     State(app): State<App>,
     ConnectInfo(_client_addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
+    // let tcti = TctiNameConf::from_environment_variable()
+    //     .unwrap_or(TctiNameConf::Device(Default::default()));
+    // let mut ctx = Context::new(tcti).unwrap();
+    let mut id_gen = app.id_gen.lock().await;
+    let id = id_gen.generate::<i64>().to_string();
+
     if let Some(ctx) = app.tpm_ctx {
+        let ctx = ctx.to_owned();
+        let mut ctx = ctx.lock().await;
+
+        let _session = ctx
+            .start_auth_session(
+                None,
+                None,
+                None,
+                SessionType::Hmac,
+                tss_esapi::structures::SymmetricDefinition::Aes {
+                    key_bits: tss_esapi::interface_types::key_bits::AesKeyBits::Aes256,
+                    mode: tss_esapi::interface_types::algorithm::SymmetricMode::Cfb,
+                },
+                HashingAlgorithm::Sha256,
+            )
+            .unwrap();
+
         // TODO: handle this lock a little better. right now
         // i dont care. because hopefully no one is spamming
         // the create project button!
-        let ctx = ctx.to_owned();
-        let mut ctx = ctx.lock().await;
-        let mut id_gen = app.id_gen.lock().await;
-        let id = id_gen.generate::<i64>().to_string();
+
         drop(id_gen);
         // 0x81000000 to 0x81FFFFFF
         let existing_handles = match ctx
@@ -98,20 +119,27 @@ pub async fn initialize_kek(
 
         let used: HashSet<u32> = existing_handles.iter().map(|h| (*h).into()).collect();
         println!("{:?}", used);
-        let available = (0x81000000..=0x81FFFFFF)
+        let available = (0x81000000..=0x817FFFFF)
             .filter(|h| !used.contains(h))
             .choose(&mut rand::rngs::OsRng);
         if let Some(available) = available {
-            let primary = create_primary(&mut ctx);
-            ctx.tr_set_auth(ESYS_TR_RH_OWNER.into(), Auth::default())
+            ctx.tr_set_auth(Hierarchy::Owner.into(), Auth::default())
                 .unwrap();
-            ctx.evict_control(
-                Provision::Owner,
-                primary.key_handle.into(),
-                tss_esapi::interface_types::dynamic_handles::Persistent::Persistent(
-                    PersistentTpmHandle::new(available).unwrap(),
-                ),
-            )
+            let primary = create_primary(&mut ctx);
+            let handle: ObjectHandle = primary.key_handle.into();
+            println!("Primary key handle: 0x{:08x}", handle.value());
+            ctx.tr_set_auth(handle, Auth::default()).unwrap();
+            ctx.execute_with_nullauth_session(|ctx| {
+                println!("Evicting to persistent handle: 0x{:08x}", available);
+
+                ctx.evict_control(
+                    Provision::Owner,
+                    handle,
+                    tss_esapi::interface_types::dynamic_handles::Persistent::Persistent(
+                        PersistentTpmHandle::new(available).unwrap(),
+                    ),
+                )
+            })
             .unwrap();
             let object_attributes = ObjectAttributesBuilder::new()
                 .with_fixed_tpm(true)
@@ -179,7 +207,7 @@ pub async fn initialize_kek(
                     let encrypted = ctx.rsa_encrypt(
                         rsa_pub_key,
                         data_to_encrypt.clone(),
-                        RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha1)),
+                        RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha256)),
                         Data::default(),
                     );
                     ctx.flush_context(rsa_pub_key.into()).unwrap();
@@ -187,15 +215,14 @@ pub async fn initialize_kek(
                 })
                 .unwrap();
 
-            ctx.flush_context(primary.key_handle.into()).unwrap();
+            ctx.flush_context(handle).unwrap();
 
             let id = sqlx::query_as::<_, (String,)>(r#"INSERT INTO kek_store(id,wrapped_kek,persistent_handle,wrapped_priv_key,wrapped_pub_key) VALUES($1,$2,$3,$4,$5) RETURNING id"#)
         .bind(&id).bind(wrapped_kek.value()).bind(available).bind(enc_private.value())
         .bind(public.marshall().unwrap()).fetch_one(&app.database).await.unwrap();
-            return (StatusCode::OK, json!({"id": id.0}).to_string()).into_response();
         }
     }
-    (StatusCode::INTERNAL_SERVER_ERROR).into_response()
+    return (StatusCode::OK, json!({"id": id}).to_string()).into_response();
 }
 
 #[derive(Serialize, Deserialize)]
@@ -335,7 +362,7 @@ fn create_primary(context: &mut Context) -> CreatePrimaryKeyResult {
     let rsa_parameters = PublicRsaParameters::new(
         symmetric,
         rsa_scheme,
-        RsaKeyBits::Rsa2048,
+        RsaKeyBits::Rsa1024,
         RsaExponent::default(),
     );
 
