@@ -4,3 +4,4 @@ Config.toml
 tokaykms.sqlite
 *.sqlite-journal
 *.sqlite-wal
+./run.sh

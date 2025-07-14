@@ -38,6 +38,7 @@ use tss_esapi::constants::{CapabilityType, PropertyTag, SessionType, Tss2Respons
 use tss_esapi::handles::ObjectHandle;
 use tss_esapi::interface_types::algorithm::{AsymmetricAlgorithm, RsaSchemeAlgorithm};
 use tss_esapi::structures::{Auth, CapabilityData, PublicParameters, PublicRsaParameters};
+use tss_esapi::tcti_ldr::NetworkTPMConfig;
 use tss_esapi::tss2_esys::ESYS_TR_RH_OWNER;
 use tss_esapi::{
     Context, TctiNameConf,
@@ -66,6 +67,8 @@ pub struct StoredKEK {
     pub persistent_handle: i32,
     pub wrapped_priv_key: Vec<u8>,
     pub wrapped_pub_key: Vec<u8>,
+    // pub nonce: Vec<u8>,
+    // pub tag: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -89,19 +92,19 @@ pub async fn initialize_kek(
         let ctx = ctx.to_owned();
         let mut ctx = ctx.lock().await;
 
-        let _session = ctx
-            .start_auth_session(
-                None,
-                None,
-                None,
-                SessionType::Hmac,
-                tss_esapi::structures::SymmetricDefinition::Aes {
-                    key_bits: tss_esapi::interface_types::key_bits::AesKeyBits::Aes256,
-                    mode: tss_esapi::interface_types::algorithm::SymmetricMode::Cfb,
-                },
-                HashingAlgorithm::Sha256,
-            )
-            .unwrap();
+        // let _session = ctx
+        //     .start_auth_session(
+        //         None,
+        //         None,
+        //         None,
+        //         SessionType::Hmac,
+        //         tss_esapi::structures::SymmetricDefinition::Aes {
+        //             key_bits: tss_esapi::interface_types::key_bits::AesKeyBits::Aes256,
+        //             mode: tss_esapi::interface_types::algorithm::SymmetricMode::Cfb,
+        //         },
+        //         HashingAlgorithm::Sha256,
+        //     )
+        //     .unwrap();
 
         // TODO: handle this lock a little better. right now
         // i dont care. because hopefully no one is spamming
@@ -184,7 +187,7 @@ pub async fn initialize_kek(
                 })
                 .unwrap();
             let salt = SaltString::generate(&mut OsRng);
-
+            let private = enc_private.value();
             // Derive KEK with Argon2id
             let argon2 = Argon2::new(
                 argon2::Algorithm::Argon2id,
@@ -201,7 +204,7 @@ pub async fn initialize_kek(
             let wrapped_kek = ctx
                 .execute_with_nullauth_session(|ctx| {
                     let rsa_pub_key = ctx
-                        .load_external_public(public.to_owned(), Hierarchy::Null)
+                        .load_external_public(public.clone(), Hierarchy::Null)
                         .unwrap();
 
                     let encrypted = ctx.rsa_encrypt(
@@ -214,12 +217,13 @@ pub async fn initialize_kek(
                     encrypted
                 })
                 .unwrap();
-
-            ctx.flush_context(handle).unwrap();
+            let _public = public.marshall().unwrap();
 
             let id = sqlx::query_as::<_, (String,)>(r#"INSERT INTO kek_store(id,wrapped_kek,persistent_handle,wrapped_priv_key,wrapped_pub_key) VALUES($1,$2,$3,$4,$5) RETURNING id"#)
-        .bind(&id).bind(wrapped_kek.value()).bind(available).bind(enc_private.value())
-        .bind(public.marshall().unwrap()).fetch_one(&app.database).await.unwrap();
+        .bind(&id).bind(wrapped_kek.value()).bind(available).bind(private)
+        .bind(_public).fetch_one(&app.database).await.unwrap();
+
+            ctx.flush_context(handle).unwrap();
         }
     }
     return (StatusCode::OK, json!({"id": id}).to_string()).into_response();
@@ -228,6 +232,14 @@ pub async fn initialize_kek(
 #[derive(Serialize, Deserialize)]
 pub struct WrapDEKRequest {
     pub dek: Vec<u8>,
+    pub secret_name: String,
+    pub kek: String,
+}
+#[derive(Serialize, Deserialize)]
+pub struct UnwrapDEKRequest {
+    pub wrapped_dek: Vec<u8>,
+    pub tag: Vec<u8>,
+    pub nonce: Vec<u8>,
     pub secret_name: String,
     pub kek: String,
 }
@@ -241,18 +253,22 @@ pub async fn wrap_dek(
         let ctx = ctx.to_owned();
         let mut ctx = ctx.lock().await;
 
-        let (wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle) = sqlx::query_as::<_, (Vec<u8>, Vec<u8>, Vec<u8>, i32)>(
+        let (wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle) = sqlx::query_as::<_, (Vec<u8>, Vec<u8>, Vec<u8>, u32)>(
             r#"SELECT wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle FROM kek_store WHERE id = ($1)"#,
         )
         .bind(wrap_deq_request.kek)
         .fetch_one(&app.database)
         .await
         .unwrap();
+        println!(
+            "pub_key->{:?}\npriv_key->{:?}\nkek->{:?}\nhandle->{:?}",
+            wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle
+        );
         // TODO: we need to decrypt the SELECTED kek.
         // then encrypt the DEK then zeroize and all that the kek, dek memory
         // then return wrapped DEK ciphertext
 
-        let p_handle = PersistentTpmHandle::new(persistent_handle.try_into().unwrap()).unwrap();
+        let p_handle = PersistentTpmHandle::new(persistent_handle).unwrap();
         let o_handle = ctx
             .tr_from_tpm_public(tss_esapi::handles::TpmHandle::Persistent(p_handle))
             .unwrap();
@@ -268,7 +284,7 @@ pub async fn wrap_dek(
                 let decrypted = ctx.rsa_decrypt(
                     rsa_priv_key,
                     PublicKeyRsa::try_from(wrapped_kek).unwrap(),
-                    RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha1)),
+                    RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha256)),
                     Data::default(),
                 );
                 decrypted
@@ -287,28 +303,13 @@ pub async fn wrap_dek(
             &mut tag,
         )
         .unwrap();
-        // let data_to_encrypt = PublicKeyRsa::try_from(wrap_deq_request.dek).unwrap();
 
-        // let encrypted_data = ctx
-        //     .execute_with_nullauth_session(|ctx| {
-        //         let rsa_pub_key = ctx
-        //             .load_external_public(public_key.clone(), Hierarchy::Null)
-        //             .unwrap();
-
-        //         let encrypted = ctx.rsa_encrypt(
-        //             rsa_pub_key,
-        //             data_to_encrypt.clone(),
-        //             RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha1)),
-        //             Data::default(),
-        //         );
-        //         ctx.flush_context(rsa_pub_key.into()).unwrap();
-        //         encrypted
-        //     })
-        //     .unwrap();
         return (
             StatusCode::OK,
             json!({
-                "wrapped_dek": ciphertext.to_vec()
+                "wrapped_dek": ciphertext.to_vec(),
+                "nonce":nonce,
+                "tag":tag
             })
             .to_string(),
         )
@@ -317,15 +318,72 @@ pub async fn wrap_dek(
     (StatusCode::INTERNAL_SERVER_ERROR).into_response()
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct UnwrapDEKRequest {}
-
+// {"nonce":[139,57,143,186,132,80,251,200,78,147,175,179],"tag":[71,82,144,71,34,106,97,170,245,224,243,52,51,215,240,230],"wrapped_dek":[59,206,59,113,142,190,237,16,74,186,216,248,131],"secret_name":"w","kek":"7350335679722688512"}
 pub async fn unwrap_dek(
     State(app): State<App>,
     ConnectInfo(_client_addr): ConnectInfo<SocketAddr>,
     Json(unwrap_dek_req): Json<UnwrapDEKRequest>,
 ) -> impl IntoResponse {
-    (StatusCode::OK).into_response()
+    if let Some(ctx) = app.tpm_ctx {
+        let ctx = ctx.to_owned();
+        let mut ctx = ctx.lock().await;
+
+        let (wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle) = sqlx::query_as::<_, (Vec<u8>, Vec<u8>, Vec<u8>, u32)>(
+            r#"SELECT wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle FROM kek_store WHERE id = ($1)"#,
+        )
+        .bind(unwrap_dek_req.kek)
+        .fetch_one(&app.database)
+        .await
+        .unwrap();
+        println!(
+            "pub_key->{:?}\npriv_key->{:?}\nkek->{:?}\nhandle->{:?}",
+            wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle
+        );
+        // TODO: we need to decrypt the SELECTED kek.
+        // then encrypt the DEK then zeroize and all that the kek, dek memory
+        // then return wrapped DEK ciphertext
+
+        let p_handle = PersistentTpmHandle::new(persistent_handle).unwrap();
+        let o_handle = ctx
+            .tr_from_tpm_public(tss_esapi::handles::TpmHandle::Persistent(p_handle))
+            .unwrap();
+
+        let public_key = Public::unmarshall(&wrapped_pub_key).unwrap();
+        let private_key = Private::try_from(wrapped_priv_key).unwrap();
+        let decrypted_kek = ctx
+            .execute_with_nullauth_session(|ctx| {
+                let rsa_priv_key = ctx
+                    .load(o_handle.into(), private_key.clone(), public_key.clone())
+                    .unwrap();
+
+                let decrypted = ctx.rsa_decrypt(
+                    rsa_priv_key,
+                    PublicKeyRsa::try_from(wrapped_kek).unwrap(),
+                    RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha256)),
+                    Data::default(),
+                );
+                decrypted
+            })
+            .unwrap();
+        let dek_bytes = decrypt_aead(
+            Cipher::aes_256_gcm(),
+            &decrypted_kek.to_vec(),
+            Some(&unwrap_dek_req.nonce),
+            &format!("secret:{}", &unwrap_dek_req.secret_name).as_bytes(),
+            &unwrap_dek_req.wrapped_dek,
+            &&unwrap_dek_req.tag,
+        )
+        .unwrap();
+        return (
+            StatusCode::OK,
+            json!({
+                "unwrapped_dek": dek_bytes
+            })
+            .to_string(),
+        )
+            .into_response();
+    }
+    (StatusCode::INTERNAL_SERVER_ERROR).into_response()
 }
 
 pub async fn status(ConnectInfo(_client_addr): ConnectInfo<SocketAddr>) -> impl IntoResponse {
@@ -389,8 +447,9 @@ async fn main() -> Result<(), String> {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let tcti = TctiNameConf::from_environment_variable()
-        .unwrap_or(TctiNameConf::Device(Default::default()));
+    // let tcti = TctiNameConf::from_environment_variable()
+    //     .unwrap_or(TctiNameConf::Device(Default::default()));
+    let tcti = TctiNameConf::Swtpm(NetworkTPMConfig::default());
     let mut ctx = Arc::new(Mutex::new(Context::new(tcti).unwrap()));
 
     // Example: Get TPM properties

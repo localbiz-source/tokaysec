@@ -4,7 +4,7 @@ pub mod fs;
 pub mod tokaykms;
 
 #[async_trait::async_trait]
-pub trait KekProvider {
+pub trait KekProvider: Sync {
     fn init() -> Self
     where
         Self: Sized,

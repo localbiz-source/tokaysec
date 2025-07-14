@@ -28,6 +28,7 @@ use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
 };
 use sqlx::{Pool, Postgres};
+use tiny_keccak::{Hasher, Kmac};
 use std::{io::Read, mem, sync::Arc};
 use subtle::ConstantTimeEq;
 use tracing::info;
@@ -37,7 +38,7 @@ use crate::{
     app::App,
     config::Config,
     db::Database,
-    kek_provider::{KekProvider, fs::FileSystemKEKProvider},
+    kek_provider::{KekProvider, fs::FileSystemKEKProvider, tokaykms::TokayKMSKEKProvider},
     models::{StoredSecret, StoredSecretObject},
     policies::BasePolicy,
     secure_buf::SecureBuffer,
@@ -54,7 +55,7 @@ async fn main() {
     unsafe {
         std::env::set_var(
             "OPENSSL_MODULES",
-            "/usr/local/lib64/ossl-modules"//"/Users/justin/openssl-fips/lib/ossl-modules", //"/usr/local/lib64/ossl-modules",
+            "/usr/local/lib64/ossl-modules", //"/Users/justin/openssl-fips/lib/ossl-modules", //"/usr/local/lib64/ossl-modules",
         )
     };
     unsafe { std::env::set_var("OPENSSL_CONF", "/home/justin/tokaysec/openssl.cnf") }; //"/Users/justin/openssl-fips/ssl/openssl.cnf") }; // "/home/justin/tokaysec/openssl.cnf"
@@ -88,9 +89,15 @@ async fn main() {
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
     if config.allow_kms_colocation {
-        info!("\x1B[1;31m************************************************************************\x1B[0m");
-        info!("\x1B[1;33m************************************************************************\x1B[0m");
-        info!("\x1B[1;31m************************************************************************\x1B[0m");
+        info!(
+            "\x1B[1;31m************************************************************************\x1B[0m"
+        );
+        info!(
+            "\x1B[1;33m************************************************************************\x1B[0m"
+        );
+        info!(
+            "\x1B[1;31m************************************************************************\x1B[0m"
+        );
         info!(
             "\n
 \x1B[1;31mONLY ALLOW KMS CO-LOCATION IF THEY ARE RUNNING IN A TIGHT SECURE
@@ -98,9 +105,15 @@ ENVIRONMENT OR IF YOU ARE TESTING. PREFER TO HOST KMS ON ANOTHER
 HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
 "
         );
-        info!("\x1B[1;31m************************************************************************\x1B[0m");
-        info!("\x1B[1;33m************************************************************************\x1B[0m");
-        info!("\x1B[1;31m************************************************************************\x1B[0m");
+        info!(
+            "\x1B[1;31m************************************************************************\x1B[0m"
+        );
+        info!(
+            "\x1B[1;33m************************************************************************\x1B[0m"
+        );
+        info!(
+            "\x1B[1;31m************************************************************************\x1B[0m"
+        );
     }
     let db = Arc::new(
         Database::init(&config.postgres, &config.migrations)
@@ -196,13 +209,10 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
             .unwrap();
         info!("Initial initialization is complete!");
     }
-    /*
-        let kek_provider = match config.kek.provider.as_str() {
-        "fs" => FileSystemKEKProvider::init(),
-        unknown @ _ => panic!("Unknown KEK provider set in config file: {:?}", unknown),
+    let kek_provider: &dyn KekProvider = match config.kms {
+        config::KMSProviders::Fs => &FileSystemKEKProvider::init(),
+        config::KMSProviders::TokayKMS { host, port } => &TokayKMSKEKProvider::init(),
     };
-
-     */
     //app.database.create_person(app.to_owned(), "jharris").await;
     // println!(
     //     "{:?}",
@@ -212,59 +222,59 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
     //         .unwrap()
     //         .id
     // );
-    // let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
-    // // Generate deks
-    // let mut _dek: SecureBuffer = SecureBuffer::new(32).unwrap();
-    // let dek_slice = _dek.expose_mut();
-    // OsRng.fill_bytes(dek_slice);
-    // // End Generate dek
-    // // Generate AAD (additional authenticated data)
-    // let id = app.gen_id().await;
-    // let name = String::from("new-secret");
-    // let aad = format!("name={}&key_id={}&version={}", &name, &id, "v0.1.0").into_bytes();
-    // let aad_hash = sha3::Sha3_256::digest(&aad);
-    // // End AAD generation
-    // // FIRST DEK splitting
-    // let dek = _dek.expose();
-    // let mut aes_key = [0u8; 32];
-    // let mut kmac_key = [0u8; 32];
+    let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
+    // Generate deks
+    let mut _dek: SecureBuffer = SecureBuffer::new(32).unwrap();
+    let dek_slice = _dek.expose_mut();
+    OsRng.fill_bytes(dek_slice);
+    // End Generate dek
+    // Generate AAD (additional authenticated data)
+    let id = app.gen_id().await;
+    let name = String::from("new-secret");
+    let aad = format!("name={}&key_id={}&version={}", &name, &id, "v0.1.0").into_bytes();
+    let aad_hash = sha3::Sha3_256::digest(&aad);
+    // End AAD generation
+    // FIRST DEK splitting
+    let dek = _dek.expose();
+    let mut aes_key = [0u8; 32];
+    let mut kmac_key = [0u8; 32];
 
-    // let hk = Hkdf::<Sha3_384>::new(None, dek);
-    // hk.expand(b"AES-256-GCM", &mut aes_key).unwrap();
-    // hk.expand(b"KMAC-256", &mut kmac_key).unwrap();
-    // // End first split
-    // // Start encryption
-    // let cipher = Aes256Gcm::new_from_slice(&aes_key).unwrap();
-    // let mut nonce: [u8; 12] = [0; 12];
-    // let sr = ring::rand::SystemRandom::new();
-    // sr.fill(&mut nonce).unwrap();
-    // let mut gcm_tag = [0u8; 16];
-    // let ciphertext = encrypt_aead(
-    //     Cipher::aes_256_gcm(),
-    //     &aes_key,
-    //     Some(&nonce),
-    //     &aad,
-    //     &secret_to_encrypt.as_bytes(),
-    //     &mut gcm_tag,
-    // )
-    // .unwrap();
-    // let mut mac = Kmac::v256(&kmac_key, &[]);
-    // for chunk in &[&ciphertext, &aad] {
-    //     mac.update(chunk);
-    // }
-    // // KMAC-256 over ciphertext + AAD
-    // let mut kmac_tag = [0u8; 32];
-    // mac.finalize(&mut kmac_tag);
-    // // Finish encryption
-    // // Wrap the DEK in the Kek and prepare to store along side secret
-    // let (wrapped_key, dek_nonce, tag) = kek_provider
-    //     .wrap_dek(_dek, "super-secret-name")
-    //     .await
-    //     .unwrap();
-    // // let _dek = kek_provider
-    // //     .unwrap_dek(&wrapped_key, dek_nonce, tag, "super-secret-name")
-    // //     .await;
-    // //drop(_dek);
+    let hk = Hkdf::<Sha3_384>::new(None, dek);
+    hk.expand(b"AES-256-GCM", &mut aes_key).unwrap();
+    hk.expand(b"KMAC-256", &mut kmac_key).unwrap();
+    // End first split
+    // Start encryption
+    let cipher = Aes256Gcm::new_from_slice(&aes_key).unwrap();
+    let mut nonce: [u8; 12] = [0; 12];
+    let sr = ring::rand::SystemRandom::new();
+    sr.fill(&mut nonce).unwrap();
+    let mut gcm_tag = [0u8; 16];
+    let ciphertext = encrypt_aead(
+        Cipher::aes_256_gcm(),
+        &aes_key,
+        Some(&nonce),
+        &aad,
+        &secret_to_encrypt.as_bytes(),
+        &mut gcm_tag,
+    )
+    .unwrap();
+    let mut mac = Kmac::v256(&kmac_key, &[]);
+    for chunk in &[&ciphertext, &aad] {
+        mac.update(chunk);
+    }
+    // KMAC-256 over ciphertext + AAD
+    let mut kmac_tag = [0u8; 32];
+    mac.finalize(&mut kmac_tag);
+    // Finish encryption
+    // Wrap the DEK in the Kek and prepare to store along side secret
+    let (wrapped_key, dek_nonce, tag) = kek_provider
+        .wrap_dek(_dek, "super-secret-name")
+        .await
+        .unwrap();
+    let _dek = kek_provider
+        .unwrap_dek(&wrapped_key, dek_nonce, tag, "super-secret-name")
+        .await;
+    //drop(_dek);
 
     // let seet = key_value_engine
     //     .store_secret(
@@ -289,38 +299,38 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
 
     // Decrypt∂
     // Split start
-    // let dek = _dek.expose();
-    // let mut aes_key = [0u8; 32];
-    // let mut kmac_key = [0u8; 32];
+    let dek = _dek.expose();
+    let mut aes_key = [0u8; 32];
+    let mut kmac_key = [0u8; 32];
 
-    // let hk = Hkdf::<Sha3_384>::new(None, dek);
-    // hk.expand(b"AES-256-GCM", &mut aes_key).unwrap();
-    // hk.expand(b"KMAC-256", &mut kmac_key).unwrap();
-    // // Split end
-    // // Compute kmac
-    // let mut mac = Kmac::v256(&kmac_key, &[]);
-    // for chunk in &[&ciphertext, &aad] {
-    //     mac.update(chunk);
-    // }
-    // // KMAC-256 over ciphertext + AAD
-    // let mut computed_kmac_tag = [0u8; 32];
-    // mac.finalize(&mut computed_kmac_tag);
-    // // Compute kmac end
-    // // Compare start
-    // if kmac_tag.ct_ne(&computed_kmac_tag).into() {
-    //     panic!("mismatch: {:?} != {:?}", kmac_tag, computed_kmac_tag);
-    // }
+    let hk = Hkdf::<Sha3_384>::new(None, dek);
+    hk.expand(b"AES-256-GCM", &mut aes_key).unwrap();
+    hk.expand(b"KMAC-256", &mut kmac_key).unwrap();
+    // Split end
+    // Compute kmac
+    let mut mac = Kmac::v256(&kmac_key, &[]);
+    for chunk in &[&ciphertext, &aad] {
+        mac.update(chunk);
+    }
+    // KMAC-256 over ciphertext + AAD
+    let mut computed_kmac_tag = [0u8; 32];
+    mac.finalize(&mut computed_kmac_tag);
+    // Compute kmac end
+    // Compare start
+    if kmac_tag.ct_ne(&computed_kmac_tag).into() {
+        panic!("mismatch: {:?} != {:?}", kmac_tag, computed_kmac_tag);
+    }
 
-    // let plaintext = decrypt_aead(
-    //     Cipher::aes_256_gcm(),
-    //     &aes_key,
-    //     Some(&nonce),
-    //     &aad,
-    //     &ciphertext,
-    //     &gcm_tag,
-    // )
-    // .unwrap();
-    // // decipher end
-    // let value = Zeroizing::new(plaintext);
-    // println!("{:?}", String::from_utf8(value.to_vec()));
+    let plaintext = decrypt_aead(
+        Cipher::aes_256_gcm(),
+        &aes_key,
+        Some(&nonce),
+        &aad,
+        &ciphertext,
+        &gcm_tag,
+    )
+    .unwrap();
+    // decipher end
+    let value = Zeroizing::new(plaintext);
+    println!("{:?}", String::from_utf8(value.to_vec()));
 }
