@@ -44,7 +44,7 @@ impl KekProvider for TokayKMSKEKProvider {
         }
         let req: reqwest::Request = self
             ._http
-            .post(format!("http://127.0.0.1:2323/unwrap"))
+            .post(format!("http://salacious:2323/unwrap"))
             .body(
                 json!({
                     "wrapped_dek": dek,
@@ -55,7 +55,7 @@ impl KekProvider for TokayKMSKEKProvider {
                 })
                 .to_string(),
             )
-            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Content-Type", "application/json")
             .build()
             .unwrap();
 
@@ -79,7 +79,7 @@ impl KekProvider for TokayKMSKEKProvider {
 
         let req: reqwest::Request = self
             ._http
-            .post(format!("http://127.0.0.1:2323/wrap"))
+            .post(format!("http://salacious:2323/wrap"))
             .body(
                 json!({
                     "dek": dek.expose(),
@@ -88,7 +88,7 @@ impl KekProvider for TokayKMSKEKProvider {
                 })
                 .to_string(),
             )
-            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Content-Type", "application/json")
             .build()
             .unwrap();
 

@@ -28,10 +28,10 @@ use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
 };
 use sqlx::{Pool, Postgres};
-use tiny_keccak::{Hasher, Kmac};
 use std::{io::Read, mem, sync::Arc};
 use subtle::ConstantTimeEq;
-use tracing::info;
+use tiny_keccak::{Hasher, Kmac};
+use tracing::{info, warn};
 use zeroize::Zeroizing;
 
 use crate::{
@@ -55,10 +55,11 @@ async fn main() {
     unsafe {
         std::env::set_var(
             "OPENSSL_MODULES",
-            "/usr/local/lib64/ossl-modules", //"/Users/justin/openssl-fips/lib/ossl-modules", //"/usr/local/lib64/ossl-modules",
+            "/Users/justin/openssl-fips/lib/ossl-modules", //"/usr/local/lib64/ossl-modules", //"/Users/justin/openssl-fips/lib/ossl-modules", //"/usr/local/lib64/ossl-modules",
         )
     };
-    unsafe { std::env::set_var("OPENSSL_CONF", "/home/justin/tokaysec/openssl.cnf") }; //"/Users/justin/openssl-fips/ssl/openssl.cnf") }; // "/home/justin/tokaysec/openssl.cnf"
+    unsafe { std::env::set_var("OPENSSL_CONF", "/Users/justin/openssl-fips/ssl/openssl.cnf") };
+    //home/justin/tokaysec/openssl.cnf") }; //"/Users/justin/openssl-fips/ssl/openssl.cnf") }; // "/home/justin/tokaysec/openssl.cnf"
     unsafe {
         std::env::set_var(
             "DYLD_LIBRARY_PATH",
@@ -89,29 +90,29 @@ async fn main() {
     let config_file = std::fs::read_to_string("./Config.toml").unwrap();
     let config: Config = toml::from_str(&config_file).unwrap();
     if config.allow_kms_colocation {
-        info!(
+        warn!(
             "\x1B[1;31m************************************************************************\x1B[0m"
         );
-        info!(
+        warn!(
             "\x1B[1;33m************************************************************************\x1B[0m"
         );
-        info!(
+        warn!(
             "\x1B[1;31m************************************************************************\x1B[0m"
         );
-        info!(
+        warn!(
             "\n
 \x1B[1;31mONLY ALLOW KMS CO-LOCATION IF THEY ARE RUNNING IN A TIGHT SECURE
 ENVIRONMENT OR IF YOU ARE TESTING. PREFER TO HOST KMS ON ANOTHER
 HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
 "
         );
-        info!(
+        warn!(
             "\x1B[1;31m************************************************************************\x1B[0m"
         );
-        info!(
+        warn!(
             "\x1B[1;33m************************************************************************\x1B[0m"
         );
-        info!(
+        warn!(
             "\x1B[1;31m************************************************************************\x1B[0m"
         );
     }
