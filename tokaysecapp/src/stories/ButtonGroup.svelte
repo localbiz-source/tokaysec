@@ -1,6 +1,6 @@
 <script lang="ts">
     import "../app.css";
-    import classNames from "classnames";
+    import "../app.css";
     import type { Component } from "svelte";
     import type { Props as ButtonProps } from "./Button.svelte";
     import Button from "./Button.svelte";
