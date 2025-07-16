@@ -5,7 +5,7 @@
 
   export interface Props {
     /** Button Style */
-    style: "primary" | "ghost" | undefined;
+    style: "primary" | "ghost";
     /** Button is block? */
     block?: boolean;
     /** Part of button group */
@@ -19,7 +19,7 @@
   }
 
   const {
-    style = "primary",
+    style,
     label,
     icon,
     block = false,
