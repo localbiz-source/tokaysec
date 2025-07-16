@@ -43,33 +43,3 @@ defined during creation.
 ### Trust
 
 All API requests involving **secrets**, **keys**, or **templated config w/ secrets** must be made with mTLS + appropriate access keys with sufficient permissions to access the secret, project & namespace. The to create secrets, configs, etc. all that is required is an access key with sufficient permissions. Any A2A (application-to-application) requests MUST be made with mTLS, and a access key with sufficient access.
-
-
-@import url("https://use.typekit.net/coj6fon.css");
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tokay Gecko Color Palette</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-100 p-20 w-screen h-screen flex flex-col items-center justify-center">
-    <div class="w-full h-full p-10">
-        <button class="cursor-pointer max-w-[15rem] w-full bg-amber-500 p-2 flex flex-col items-start justify-start border-2 border-amber-500 outline-2 outline-amber-500 hover:bg-amber-400 hover:border-amber-400 hover:outline-amber-400 active:bg-amber-500 focus:bg-amber-500 focus:outline-amber-900 active:outline-amber-900 active:border-amber-500 focus:border-amber-500 transition-all duration-150">
-          <span class="font-['Myriad-Pro'] text-white">Create Secret</span>
-        </button>
-    </div>
-    <div class="w-full h-full p-10">
-      <div class="flex flex-row gap-1">
-          <button class="cursor-pointer h-[5rem] max-w-[15rem] w-full bg-amber-500 p-2 flex flex-col items-start justify-start border-2 border-amber-500 outline-2 outline-amber-500 hover:bg-amber-400 hover:border-amber-400 hover:outline-amber-400 active:bg-amber-500 focus:bg-amber-500 focus:outline-amber-900 active:outline-amber-900 active:border-amber-500 focus:border-amber-500 transition-all duration-150">
-          <span class="font-['Myriad-Pro'] text-white">Create Secret</span>
-        </button>
-          <button class="cursor-pointer h-[5rem] max-w-[15rem] w-full bg-neutral-500 p-2 flex flex-col items-start justify-start border-2 border-neutral-500 outline-2 outline-neutral-500 hover:bg-neutral-400 hover:border-neutral-400 hover:outline-neutral-400 active:bg-neutral-500 focus:bg-neutral-500 focus:outline-neutral-900 active:outline-neutral-900 active:border-neutral-500 focus:border-neutral-500 transition-all duration-150">
-          <span class="font-['Myriad-Pro'] text-white">Cancel</span>
-        </button>
-      </div>
-    </div>
-</body>
-</html>
