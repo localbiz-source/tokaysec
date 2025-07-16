@@ -388,7 +388,7 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
         check_allowed(
             &app,
             Some(String::from("7350660643688550400")),
-            Some(String::from("7350660643692744705")),
+            Some(String::from("7350660643692744704")),
             String::from("proj:7350660643692744704"),
             String::from("7350660643675967489"),
             AccessAction::Manage

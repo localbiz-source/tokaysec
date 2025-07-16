@@ -117,9 +117,7 @@ pub async fn check_allowed(
     let check_if_okay = async |ty: ResourceTypes, id: String| -> bool {
         match ty {
             ResourceTypes::Person => {
-                if id == person.id {
-                    return false;
-                }
+                return id == person.id
             }
             ResourceTypes::Permission => todo!(),
             ResourceTypes::Role => {
@@ -129,13 +127,10 @@ pub async fn check_allowed(
                         .fetch_one(&app.database.inner)
                         .await
                         .unwrap();
-                if person_roles.iter().any(|e| e.id == role.id) {
-                    return false;
-                }
+                return person_roles.iter().any(|e| e.id == role.id)
             }
             _ => return false,
         }
-        return true;
     };
     info!(
         "\nOperating on:\n\tDeny-> {:?}\n\tUser Roles-> {:?}",
@@ -144,13 +139,13 @@ pub async fn check_allowed(
     // 1. If any deny, return false
     // 2. If any allow, return true
     for (id, r#type, action) in list {
-        let not_okay = check_if_okay(r#type, id).await;
+        let is_okay = check_if_okay(r#type, id).await;
         if let PolicyRuleTargetAction::Deny = action
-            && !not_okay
+            && !is_okay
         {
             return false;
         } else if let PolicyRuleTargetAction::Allow = action
-            && not_okay
+            && is_okay
         {
             return true;
         }
