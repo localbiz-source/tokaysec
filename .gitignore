@@ -2,4 +2,7 @@
 /kek
 openssl.cnf
 Config.toml
-Cargo.lock
+/target
+/kek
+openssl.cnf
+Config.toml
