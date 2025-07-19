@@ -2,15 +2,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-// #[derive(Serialize, Deserialize, FromRow)]
-// pub struct StoredSecretObject {
-//     pub ciphertext: Vec<u8>,
-//     pub kmac_tag: Vec<u8>,
-//     pub gcm_tag: Vec<u8>,
-//     pub wrapped_dek: Vec<u8>,
-//     pub nonce: Vec<u8>,
-// }
-
 #[derive(Serialize, Deserialize, FromRow, Debug)]
 
 pub struct ResourceAssignment {
@@ -22,13 +13,28 @@ pub struct ResourceAssignment {
     pub assigned_by: String,
 }
 
-// #[derive(Serialize, Deserialize, FromRow)]
-// pub struct StoredSecret {
-//     pub key: String,
-//     //pub version: String,
-//     pub id: String,
-//     pub secret: serde_json::Value,
-// }
+#[derive(Serialize, Deserialize, FromRow, Debug)]
+pub struct WrappedDek {
+    pub id: String,
+    pub wrapped: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub tag: Vec<u8>,
+    pub added_when: DateTime<Utc>,
+    pub added_by: String,
+}
+#[derive(Serialize, Deserialize, FromRow, Debug)]
+pub struct KVStoredValue {
+    pub id: String,
+    pub key: String,
+    pub value: Vec<u8>,
+    pub gcm_tag: Vec<u8>,
+    pub kmac_tag: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub dek_used: String,
+    pub added_when: DateTime<Utc>,
+    pub added_by: String,
+    pub last_updated: DateTime<Utc>,
+}
 
 #[derive(Serialize, Deserialize, FromRow, Debug)]
 pub struct Person {
@@ -61,7 +67,7 @@ pub struct PolicyRuleTarget {
     pub target_type: String,
     pub action: i32,
     pub resource: String,
-    pub resource_type: String
+    pub resource_type: String,
 }
 #[derive(Serialize, Deserialize, FromRow, Debug)]
 pub struct Permission {
@@ -74,6 +80,7 @@ pub struct Permission {
 pub struct Project {
     pub id: String,
     pub name: String,
+    pub kek_id: String,
     pub namespace: Option<String>,
     pub added_when: DateTime<Utc>,
 }
@@ -83,6 +90,8 @@ pub struct Namespace {
     pub id: String,
     pub name: String,
     pub added_when: DateTime<Utc>,
+    pub created_by: String,
+    pub last_updated: DateTime<Utc>,
 }
 /*
 

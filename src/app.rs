@@ -1,7 +1,9 @@
 use crate::{
     db::Database,
+    kek_provider::KekProvider,
     models::{Namespace, Permission, Person, PolicyRuleTarget, Project, ResourceAssignment, Role},
-    stores::Store,
+    policies::split,
+    stores::{Store, kv::KvStore},
 };
 use chrono::Utc;
 use serde::{Serialize, de::DeserializeOwned};
@@ -82,10 +84,11 @@ pub enum ResourceTypes {
     Person,
     Permission,
     Role,
+    Secret,
 }
 
 #[derive(Debug)]
-pub struct EasyResource<'a>(ResourceTypes, &'a str);
+pub struct EasyResource<'a>(pub ResourceTypes, pub &'a str);
 
 impl ToString for ResourceTypes {
     fn to_string(&self) -> String {
@@ -96,6 +99,7 @@ impl ToString for ResourceTypes {
             ResourceTypes::Person => "prsn",
             ResourceTypes::Permission => "perm",
             ResourceTypes::Role => "role",
+            ResourceTypes::Secret => "scrt",
         })
     }
 }
@@ -111,6 +115,7 @@ impl TryFrom<&str> for ResourceTypes {
             "prsn" => Self::Person,
             "perm" => Self::Permission,
             "role" => Self::Role,
+            "scrt" => Self::Secret,
             _ => return Err(String::from("Not found.")),
         });
     }
@@ -118,9 +123,13 @@ impl TryFrom<&str> for ResourceTypes {
 
 impl App {
     pub async fn init(database: Arc<Database>) -> Self {
+        let mut stores: HashMap<String, Box<dyn Store>> = HashMap::new();
+        let kv_store = KvStore::init().await;
+        stores
+            .insert("kv_store".to_string(), Box::new(kv_store));
         Self {
             database,
-            stores: Arc::new(RwLock::new(HashMap::new())),
+            stores: Arc::new(RwLock::new(stores)),
             id_gen: Arc::new(Mutex::new(Generator::new(1))),
         }
     }
@@ -153,69 +162,69 @@ impl App {
         return Ok(sqlx::query_as::<_, Role>(r#"INSERT INTO tokaysec.roles(id,name,scope_level,defined_by) VALUES($1,$2,$4,$3) RETURNING *"#)
             .bind(gen_id).bind(&name).bind(&creator_id).bind(scope.to_string()).fetch_one(&self.database.inner).await.unwrap());
     }
+    pub async fn get_project(&self, project_id: &str) -> std::result::Result<Project, String> {
+        return Ok(sqlx::query_as::<_, Project>(
+            r#"SELECT * FROM tokaysec.projects WHERE id = ($1)"#,
+        )
+        .bind(project_id)
+        .fetch_one(&self.database.inner)
+        .await
+        .unwrap());
+    }
     pub async fn create_project(
         &self,
+        kek_provider: &dyn KekProvider,
         name: &str,
-        namespace: Option<&str>,
+        namespace: &str,
     ) -> std::result::Result<Project, String> {
+        let new_kek_id = kek_provider.init_new_kek().await.unwrap();
+
         let created_when = Utc::now();
         let gen_id = self.gen_id().await;
         return Ok(sqlx::query_as::<_, Project>(
-            r#"INSERT INTO tokaysec.projects(id,name,namespace,added_when) VALUES($1,$2,$3,$4) RETURNING *"#,
+            r#"INSERT INTO tokaysec.projects(id,name,namespace,kek_id,added_when) VALUES($1,$2,$3,$4,$5) RETURNING *"#,
         )
         .bind(gen_id)
         .bind(&name)
         .bind(&namespace)
+        .bind(&new_kek_id)
         .bind(created_when)
         .fetch_one(&self.database.inner)
         .await
         .unwrap());
     }
-    pub async fn create_namespace(&self, name: &str) -> std::result::Result<Namespace, String> {
+    pub async fn create_namespace(
+        &self,
+        name: &str,
+        creator_id: &str,
+    ) -> std::result::Result<Namespace, String> {
         let created_when = Utc::now();
         let gen_id = self.gen_id().await;
         return Ok(sqlx::query_as::<_, Namespace>(
-            r#"INSERT INTO tokaysec.namespaces(id,name,added_when) VALUES($1,$2,$3) RETURNING *"#,
+            r#"INSERT INTO tokaysec.namespaces(id,name,added_when,last_updated,created_by) VALUES($1,$2,$3,$3,$4) RETURNING *"#,
         )
         .bind(gen_id)
         .bind(&name)
         .bind(created_when)
+        .bind(&creator_id)
         .fetch_one(&self.database.inner)
         .await
         .unwrap());
     }
     pub async fn create_resource_assignment(
         &self,
-        target: &str,
-        resource: &str,
+        target: EasyResource<'_>,
+        resource: EasyResource<'_>,
         assigned_by: &str,
     ) -> std::result::Result<ResourceAssignment, String> {
         let assigned_when = Utc::now();
-        let split = target.split(":").collect::<Vec<&str>>();
-        let (assign_to, assign_to_type) = if let Some(first) = split.get(0)
-            && let Some(second) = split.get(1)
-        {
-            let r#type: ResourceTypes = ResourceTypes::try_from(*first).unwrap();
-            (*second, r#type)
-        } else {
-            panic!()
-        };
-        let split_resource = resource.split(":").collect::<Vec<&str>>();
-        let (resource, resource_type) = if let Some(first) = split_resource.get(0)
-            && let Some(second) = split_resource.get(1)
-        {
-            let r#type: ResourceTypes = ResourceTypes::try_from(*first).unwrap();
-            (*second, r#type)
-        } else {
-            panic!()
-        };
         return Ok(sqlx::query_as::<_, ResourceAssignment>(
             r#"INSERT INTO tokaysec.resource_assignment(assigned_to,assigned_to_type,resource,resource_type,assigned_by,assigned_when) VALUES($1,$2,$3,$4,$5,$6) RETURNING *"#,
         )
-        .bind(&assign_to)
-        .bind(assign_to_type.to_string())
-        .bind(&resource)
-        .bind(resource_type.to_string())
+        .bind(&target.1)
+        .bind(target.0.to_string())
+        .bind(&resource.1)
+        .bind(resource.0.to_string())
         .bind(&assigned_by)
         .bind(assigned_when)
         .fetch_one(&self.database.inner)
@@ -230,24 +239,8 @@ impl App {
     ) -> std::result::Result<PolicyRuleTarget, String> {
         let created_when = Utc::now();
         let gen_id = self.gen_id().await;
-        let split = target.split(":").collect::<Vec<&str>>();
-        let (target, target_type) = if let Some(first) = split.get(0)
-            && let Some(second) = split.get(1)
-        {
-            let r#type: ResourceTypes = ResourceTypes::try_from(*first).unwrap();
-            (*second, r#type)
-        } else {
-            panic!()
-        };
-        let split_resource = resource.split(":").collect::<Vec<&str>>();
-        let (resource, resource_type) = if let Some(first) = split_resource.get(0)
-            && let Some(second) = split_resource.get(1)
-        {
-            let r#type: ResourceTypes = ResourceTypes::try_from(*first).unwrap();
-            (*second, r#type)
-        } else {
-            panic!()
-        };
+        let (target, target_type) = split(target.to_string());
+        let (resource, resource_type) = split(resource.to_string());
         let action: i32 = action.into();
         return Ok(sqlx::query_as::<_, PolicyRuleTarget>(r#"INSERT INTO tokaysec.policy_rule_target(id,target,target_type,action,resource,resource_type) VALUES($1,$2,$3,$4,$5,$6) RETURNING *"#)
             .bind(gen_id).bind(target).bind(target_type.to_string()).bind(action).bind(resource).bind(resource_type.to_string()).fetch_one(&self.database.inner).await.unwrap());

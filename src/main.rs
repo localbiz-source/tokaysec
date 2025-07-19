@@ -29,20 +29,30 @@ use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
 };
 use sqlx::{Pool, Postgres};
-use std::{collections::HashMap, io::Read, mem, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    io::Read,
+    mem,
+    sync::Arc,
+};
 use subtle::ConstantTimeEq;
 use tiny_keccak::{Hasher, Kmac};
 use tracing::{info, warn};
+
 use zeroize::Zeroizing;
 
 use crate::{
-    app::{App, ResourceTypes, ScopeLevel},
+    app::{App, EasyResource, ResourceTypes, ScopeLevel},
     config::{Config, StoreConfig},
     db::Database,
-    kek_provider::{fs::FileSystemKEKProvider, tokaykms::TokayKMSKEKProvider, KekProvider},
+    kek_provider::{KekProvider, fs::FileSystemKEKProvider, tokaykms::TokayKMSKEKProvider},
     models::{Namespace, Permission, Person, PolicyRuleTarget, Project, ResourceAssignment, Role},
-    policies::{check_allowed, AccessAction},
+    policies::{AccessAction, check_allowed},
     secure_buf::SecureBuffer,
+    stores::{
+        Store,
+        kv::{self, KvStore},
+    },
 };
 
 #[tokio::main]
@@ -123,6 +133,10 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
             .unwrap(),
     );
     let app = Arc::new(App::init(db).await);
+    let kek_provider: &dyn KekProvider = match config.kms {
+        config::KMSProviders::Fs => &FileSystemKEKProvider::init(),
+        config::KMSProviders::TokayKMS { host, port } => &TokayKMSKEKProvider::init(),
+    };
     if !app
         .get_config_value::<bool>("intially_initialized")
         .await
@@ -148,25 +162,28 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
             .create_role("special", &admin_person.id, app::ScopeLevel::Instance)
             .await
             .unwrap();
-        let default_namespace = app.create_namespace("default_namespace").await.unwrap();
+        let default_namespace = app
+            .create_namespace("default_namespace", &admin_person.id)
+            .await
+            .unwrap();
         let default_project = app
-            .create_project("default_projcet", Some(&default_namespace.id))
+            .create_project(kek_provider, "default_projcet", &default_namespace.id)
             .await
             .unwrap();
         let top_secret_project = app
-            .create_project("top_secret_project", Some(&default_namespace.id))
+            .create_project(kek_provider, "top_secret_project", &default_namespace.id)
             .await
             .unwrap();
         app.create_resource_assignment(
-            &format!("nmsp:{}", &default_namespace.id),
-            &format!("proj:{}", &default_project.id),
+            EasyResource(ResourceTypes::Namespace, &default_namespace.id),
+            EasyResource(ResourceTypes::Project, &default_project.id),
             &admin_person.id,
         )
         .await
         .unwrap();
         app.create_resource_assignment(
-            &format!("nmsp:{}", &default_namespace.id),
-            &format!("proj:{}", &top_secret_project.id),
+            EasyResource(ResourceTypes::Namespace, &default_namespace.id),
+            EasyResource(ResourceTypes::Project, &default_project.id),
             &admin_person.id,
         )
         .await
@@ -194,8 +211,8 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
         .await
         .unwrap();
         app.create_resource_assignment(
-            &format!("prsn:{}", &admin_person.id),
-            &format!("role:{}", &default_role.id),
+            EasyResource(ResourceTypes::Person, &admin_person.id),
+            EasyResource(ResourceTypes::Role, &default_role.id),
             &admin_person.id,
         )
         .await
@@ -204,201 +221,210 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
         // these permissions are "hard coded" in actions however but later on
         // I think i am going to make a custom permissions bs...ENTERPRISE EDITION!! jk
         // secret related
-        let perm_groups = ["secrets", "config", "pki"];
+        // let perm_groups = ["secrets", "config", "pki"];
         let target = format!("role:{}", &default_role.id);
-        for perm_group in perm_groups {
-            let read_p = app
-                .create_permission(&format!("read:{perm_group}"), None)
-                .await
-                .unwrap();
-            let write_p = app
-                .create_permission(&format!("write:{perm_group}"), None)
-                .await
-                .unwrap();
-            app.create_policy_rule_target(
-                &target,
-                app::PolicyRuleTargetAction::Allow,
-                &format!("perm:{}", &read_p.id),
-            )
-            .await
-            .unwrap();
-            app.create_policy_rule_target(
-                &target,
-                app::PolicyRuleTargetAction::Allow,
-                &format!("perm:{}", &write_p.id),
-            )
-            .await
-            .unwrap();
-        }
-        // some special perms...for special things
-        let manage_ca = app
-            .create_permission(&format!("manage:ca"), None)
-            .await
-            .unwrap();
-        // this includes revoking shit and alat. The pki above is everything BUT these two
-        let manage_crl = app
-            .create_permission(&format!("manage:crl"), None)
-            .await
-            .unwrap();
         app.create_policy_rule_target(
             &target,
             app::PolicyRuleTargetAction::Allow,
-            &format!("perm:{}", &manage_ca.id),
+            &format!("perm:{}", AccessAction::CreateSecret.to_string()),
         )
         .await
         .unwrap();
         app.create_policy_rule_target(
             &target,
             app::PolicyRuleTargetAction::Allow,
-            &format!("perm:{}", &manage_crl.id),
+            &format!("perm:{}", AccessAction::UpdateSecret.to_string()),
         )
         .await
         .unwrap();
-        // pki related
+        app.create_policy_rule_target(
+            &target,
+            app::PolicyRuleTargetAction::Allow,
+            &format!("perm:{}", AccessAction::DeleteSecret.to_string()),
+        )
+        .await
+        .unwrap();
         // Now that everything has intialized we will set this true.
         app.set_config_value("intially_initialized", true)
             .await
             .unwrap();
-        info!("Initial initialization is complete!");
-    }
-    let kek_provider: &dyn KekProvider = match config.kms {
-        config::KMSProviders::Fs => &FileSystemKEKProvider::init(),
-        config::KMSProviders::TokayKMS { host, port } => &TokayKMSKEKProvider::init(),
-    };
-    // TODO: clean this up. break it up.
-    let mut formated_namespaces = vec![];
-    for namespace in sqlx::query_as::<_, Namespace>(r#"SELECT * FROM tokaysec.namespaces"#)
-        .fetch_all(&app.database.inner)
-        .await
-        .unwrap()
-    {
-        let mut formated_projects = vec![];
-        let mut formated_roles = vec![];
-        for role in sqlx::query_as::<_, Role>(
-            r#"SELECT * FROM tokaysec.roles WHERE scope_level = $1 AND defined_by = ($2)"#,
-        )
-        .bind(ScopeLevel::Namespace.to_string())
-        .bind(&namespace.id)
-        .fetch_all(&app.database.inner)
-        .await
-        .unwrap()
-        {
-            formated_roles.push(json!({
-                "name": role.name
-            }));
-        }
-
-        for project in sqlx::query_as::<_, Project>(
-            r#"SELECT * FROM tokaysec.projects WHERE namespace = ($1)"#,
-        )
-        .bind(&namespace.id)
-        .fetch_all(&app.database.inner)
-        .await
-        .unwrap()
-        {
-            let mut fomrated_rules = vec![];
-            let target_rules = sqlx::query_as::<_, PolicyRuleTarget>(
-                r#"SELECT * FROM tokaysec.policy_rule_target WHERE target = ($1) AND target_type = 'proj'"#,
-            )
-            .bind(&project.id)
-            .fetch_all(&app.database.inner)
+        app.set_config_value("instance_locked_until_default_is_changed", true)
             .await
             .unwrap();
-            for rule in target_rules {
-                fomrated_rules.push(match rule.action {
-                    0 => format!("-{}:{}", rule.resource_type, rule.resource),
-                    1 => format!("+{}:{}", rule.resource_type, rule.resource),
-                    _ => continue,
-                })
-            }
-            formated_projects.push(json!({
-                "name": project.name,
-                "rules": fomrated_rules
-            }));
-        }
-        formated_namespaces.push(json!({
-            "projects": formated_projects,
-            "roles": formated_roles,
-            "name": namespace.name
-        }));
+        info!("Initial initialization is complete!");
     }
-    let mut formated_roles = vec![];
-    let mut formated_people = vec![];
-    for role in sqlx::query_as::<_, Role>(
-        r#"SELECT * FROM tokaysec.roles WHERE scope_level = 'instance' OR scope_level = NULL"#,
-    )
-    .fetch_all(&app.database.inner)
-    .await
-    .unwrap()
-    {
-        let mut formated_perms = vec![];
-        let permissions = sqlx::query_as::<_, PolicyRuleTarget>(
-            r#"SELECT * FROM tokaysec.policy_rule_target WHERE target = $1 AND target_type = 'role'"#,
-        ).bind(role.id)
-        .fetch_all(&app.database.inner)
+    // top secret : 7352141083272286208
+    // default : 7352141003882500096
+    let admin_id = app
+        .get_config_value::<String>("admin_account_id")
         .await
         .unwrap();
-        for perm in permissions {
-            formated_perms.push(match perm.action {
-                0 => format!("-{}:{}", perm.resource_type, perm.resource),
-                1 => format!("+{}:{}", perm.resource_type, perm.resource),
-                _ => continue,
-            })
-        }
-        formated_roles.push(json!({
-            "name": role.name,
-            "permissions": formated_perms
-        }))
-    }
-    for person in sqlx::query_as::<_, Person>(r#"SELECT * FROM tokaysec.people"#)
-        .fetch_all(&app.database.inner)
-        .await
-        .unwrap()
-    {
-        let mut formated_roles = vec![];
-        for assignment in sqlx::query_as::<_, ResourceAssignment>(
-            r#"SELECT * FROM tokaysec.resource_assignment WHERE assigned_to = $1"#,
-        )
-        .bind(person.id)
-        .fetch_all(&app.database.inner)
-        .await
-        .unwrap()
-        {
-            match ResourceTypes::try_from(assignment.resource_type.as_str()).unwrap() {
-                ResourceTypes::Instance => todo!(),
-                ResourceTypes::Namespace => todo!(),
-                ResourceTypes::Project => todo!(),
-                ResourceTypes::Person => todo!(),
-                ResourceTypes::Permission => todo!(),
-                ResourceTypes::Role => {
-                    formated_roles.push(format!(
-                        "+{}:{}",
-                        assignment.resource_type, assignment.resource
-                    ));
-                }
-            }
-        }
-        formated_people.push(json!({
-            "name": person.name,
-            "roles": formated_roles
-        }));
-    }
+    let admin_user: &str = admin_id.as_str();
     println!(
-        "(checks:{:?}) \n\n  {:#?}",
+        "Can create secrets? {:?}",
         check_allowed(
             &app,
-            Some(String::from("7350660643688550400")),
-            Some(String::from("7350660643692744704")),
-            String::from("proj:7350660643692744704"),
-            String::from("7350660643675967489"),
-            AccessAction::Manage
-        ).await,
-        json!({
-            "people": formated_people,
-            "roles": formated_roles,
-            "namespaces": formated_namespaces
-        })
+            Some(String::from("7352140924266221570")),
+            Some(String::from("7352141003882500096")),
+            String::from("perm:1"),
+            admin_id.to_owned(),
+            HashSet::from_iter(vec![AccessAction::CreateSecret])
+        )
+        .await
     );
+    let stores = app.stores.clone();
+    let stores_read = stores.read().await;
+    let kv_store = stores_read.get("kv_store").unwrap().to_owned();
+    kv_store.get(&app, "7352141854256664576", kek_provider).await;
+    // kv_store
+    //     .store(
+    //         &app,
+    //         String::from("7352141003882500096"),
+    //         kek_provider,
+    //         json!({
+    //             "name": "Hello, ",
+    //             "value": vec![72, 101, 108, 108, 111, 44, 32, 119, 111, 114, 108, 100, 33]
+    //         }),
+    //         admin_user,
+    //     )
+    //     .await;
+
+
+    // TODO: clean this up. break it up.
+    // let mut formated_namespaces = vec![];
+    // for namespace in sqlx::query_as::<_, Namespace>(r#"SELECT * FROM tokaysec.namespaces"#)
+    //     .fetch_all(&app.database.inner)
+    //     .await
+    //     .unwrap()
+    // {
+    //     let mut formated_projects = vec![];
+    //     let mut formated_roles = vec![];
+    //     for role in sqlx::query_as::<_, Role>(
+    //         r#"SELECT * FROM tokaysec.roles WHERE scope_level = $1 AND defined_by = ($2)"#,
+    //     )
+    //     .bind(ScopeLevel::Namespace.to_string())
+    //     .bind(&namespace.id)
+    //     .fetch_all(&app.database.inner)
+    //     .await
+    //     .unwrap()
+    //     {
+    //         formated_roles.push(json!({
+    //             "name": role.name
+    //         }));
+    //     }
+
+    //     for project in sqlx::query_as::<_, Project>(
+    //         r#"SELECT * FROM tokaysec.projects WHERE namespace = ($1)"#,
+    //     )
+    //     .bind(&namespace.id)
+    //     .fetch_all(&app.database.inner)
+    //     .await
+    //     .unwrap()
+    //     {
+    //         let mut fomrated_rules = vec![];
+    //         let target_rules = sqlx::query_as::<_, PolicyRuleTarget>(
+    //             r#"SELECT * FROM tokaysec.policy_rule_target WHERE target = ($1) AND target_type = 'proj'"#,
+    //         )
+    //         .bind(&project.id)
+    //         .fetch_all(&app.database.inner)
+    //         .await
+    //         .unwrap();
+    //         for rule in target_rules {
+    //             fomrated_rules.push(match rule.action {
+    //                 0 => format!("-{}:{}", rule.resource_type, rule.resource),
+    //                 1 => format!("+{}:{}", rule.resource_type, rule.resource),
+    //                 _ => continue,
+    //             })
+    //         }
+    //         formated_projects.push(json!({
+    //             "name": project.name,
+    //             "rules": fomrated_rules
+    //         }));
+    //     }
+    //     formated_namespaces.push(json!({
+    //         "projects": formated_projects,
+    //         "roles": formated_roles,
+    //         "name": namespace.name
+    //     }));
+    // }
+    // let mut formated_roles = vec![];
+    // let mut formated_people = vec![];
+    // for role in sqlx::query_as::<_, Role>(
+    //     r#"SELECT * FROM tokaysec.roles WHERE scope_level = 'instance' OR scope_level = NULL"#,
+    // )
+    // .fetch_all(&app.database.inner)
+    // .await
+    // .unwrap()
+    // {
+    //     let mut formated_perms = vec![];
+    //     let permissions = sqlx::query_as::<_, PolicyRuleTarget>(
+    //         r#"SELECT * FROM tokaysec.policy_rule_target WHERE target = $1 AND target_type = 'role'"#,
+    //     ).bind(role.id)
+    //     .fetch_all(&app.database.inner)
+    //     .await
+    //     .unwrap();
+    //     for perm in permissions {
+    //         formated_perms.push(match perm.action {
+    //             0 => format!("-{}:{}", perm.resource_type, perm.resource),
+    //             1 => format!("+{}:{}", perm.resource_type, perm.resource),
+    //             _ => continue,
+    //         })
+    //     }
+    //     formated_roles.push(json!({
+    //         "name": role.name,
+    //         "permissions": formated_perms
+    //     }))
+    // }
+    // for person in sqlx::query_as::<_, Person>(r#"SELECT * FROM tokaysec.people"#)
+    //     .fetch_all(&app.database.inner)
+    //     .await
+    //     .unwrap()
+    // {
+    //     let mut formated_roles = vec![];
+    //     for assignment in sqlx::query_as::<_, ResourceAssignment>(
+    //         r#"SELECT * FROM tokaysec.resource_assignment WHERE assigned_to = $1"#,
+    //     )
+    //     .bind(person.id)
+    //     .fetch_all(&app.database.inner)
+    //     .await
+    //     .unwrap()
+    //     {
+    //         match ResourceTypes::try_from(assignment.resource_type.as_str()).unwrap() {
+    //             ResourceTypes::Instance => todo!(),
+    //             ResourceTypes::Namespace => todo!(),
+    //             ResourceTypes::Project => todo!(),
+    //             ResourceTypes::Person => todo!(),
+    //             ResourceTypes::Permission => todo!(),
+    //             ResourceTypes::Role => {
+    //                 formated_roles.push(format!(
+    //                     "+{}:{}",
+    //                     assignment.resource_type, assignment.resource
+    //                 ));
+    //             }
+    //         }
+    //     }
+    //     formated_people.push(json!({
+    //         "name": person.name,
+    //         "roles": formated_roles
+    //     }));
+    // }
+    // println!(
+    //     "(checks:{:?}) \n\n  {:#?}",
+    //     check_allowed(
+    //         &app,
+    //         Some(String::from("7350660643688550400")),
+    //         Some(String::from("7350660643692744704")),
+    //         String::from("proj:7350660643692744704"),
+    //         String::from("7350660643675967489"),
+    //         AccessAction::Manage
+    //     )
+    //     .await,
+    //     json!({
+    //         "people": formated_people,
+    //         "roles": formated_roles,
+    //         "namespaces": formated_namespaces
+    //     })
+    // );
     //app.database.create_person(app.to_owned(), "jharris").await;
     // println!(
     //     "{:?}",

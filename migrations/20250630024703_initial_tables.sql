@@ -52,18 +52,19 @@ CREATE TABLE IF NOT EXISTS tokaysec.resource_assignment (
     "assigned_by" TEXT NOT NULL REFERENCES tokaysec.people("id")
 );
 
-CREATE TABLE IF NOT EXISTS tokaysec.projects (
-    "id" TEXT NOT NULL UNIQUE PRIMARY KEY,
-    "name" TEXT NOT NULL,
-    "namespace" TEXT,
-    "added_when" TIMESTAMPTZ NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
-);
 
 CREATE TABLE IF NOT EXISTS tokaysec.namespaces (
     "id" TEXT NOT NULL UNIQUE PRIMARY KEY,
     "name" TEXT NOT NULL,
+    "added_when" TIMESTAMPTZ NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+    "created_by" TEXT NOT NULL REFERENCES tokaysec.people("id") ON DELETE CASCADE,
+    "last_updated" TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tokaysec.projects (
+    "id" TEXT NOT NULL UNIQUE PRIMARY KEY,
+    "name" TEXT NOT NULL,
+    "kek_id" TEXT UNIQUE NOT NULL,
+    "namespace" TEXT NOT NULL REFERENCES tokaysec.namespaces("id"),
     "added_when" TIMESTAMPTZ NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
-    -- "created_by" TEXT NOT NULL REFERENCES tokaysec.people("id") ON DELETE CASCADE,
-    -- "created_when" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
-    -- "last_updated" TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 );
