@@ -34,7 +34,9 @@ use sqlx::{
 use tokio::sync::Mutex;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
-use tss_esapi::constants::{CapabilityType, PropertyTag, SessionType, Tss2ResponseCode};
+use tss_esapi::constants::{
+    CapabilityType, PropertyTag, SessionType, StartupType, Tss2ResponseCode,
+};
 use tss_esapi::handles::ObjectHandle;
 use tss_esapi::interface_types::algorithm::{AsymmetricAlgorithm, RsaSchemeAlgorithm};
 use tss_esapi::structures::{Auth, CapabilityData, PublicParameters, PublicRsaParameters};
@@ -249,73 +251,71 @@ pub async fn wrap_dek(
     ConnectInfo(_client_addr): ConnectInfo<SocketAddr>,
     Json(wrap_deq_request): Json<WrapDEKRequest>,
 ) -> impl IntoResponse {
-    if let Some(ctx) = app.tpm_ctx {
-        let ctx = ctx.to_owned();
-        let mut ctx = ctx.lock().await;
+    let ctx = app.tpm_ctx.unwrap().to_owned();
+    let mut ctx = ctx.lock().await;
 
-        let (wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle) = sqlx::query_as::<_, (Vec<u8>, Vec<u8>, Vec<u8>, u32)>(
+    let (wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle) = sqlx::query_as::<_, (Vec<u8>, Vec<u8>, Vec<u8>, u32)>(
             r#"SELECT wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle FROM kek_store WHERE id = ($1)"#,
         )
         .bind(wrap_deq_request.kek)
         .fetch_one(&app.database)
         .await
         .unwrap();
-        println!(
-            "pub_key->{:?}\npriv_key->{:?}\nkek->{:?}\nhandle->{:?}",
-            wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle
-        );
-        // TODO: we need to decrypt the SELECTED kek.
-        // then encrypt the DEK then zeroize and all that the kek, dek memory
-        // then return wrapped DEK ciphertext
+    println!(
+        "pub_key->{:?}\npriv_key->{:?}\nkek->{:?}\nhandle-> 0x{:08x}",
+        wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle
+    );
+    // TODO: we need to decrypt the SELECTED kek.
+    // then encrypt the DEK then zeroize and all that the kek, dek memory
+    // then return wrapped DEK ciphertext
 
-        let p_handle = PersistentTpmHandle::new(persistent_handle).unwrap();
-        let o_handle = ctx
-            .tr_from_tpm_public(tss_esapi::handles::TpmHandle::Persistent(p_handle))
-            .unwrap();
-
-        let public_key = Public::unmarshall(&wrapped_pub_key).unwrap();
-        let private_key = Private::try_from(wrapped_priv_key).unwrap();
-        let decrypted_kek = ctx
-            .execute_with_nullauth_session(|ctx| {
-                let rsa_priv_key = ctx
-                    .load(o_handle.into(), private_key.clone(), public_key.clone())
-                    .unwrap();
-
-                let decrypted = ctx.rsa_decrypt(
-                    rsa_priv_key,
-                    PublicKeyRsa::try_from(wrapped_kek).unwrap(),
-                    RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha256)),
-                    Data::default(),
-                );
-                decrypted
-            })
-            .unwrap();
-        let mut nonce: [u8; 12] = [0; 12];
-        let sr = ring::rand::SystemRandom::new();
-        sr.fill(&mut nonce).unwrap();
-        let mut tag = [0u8; 16];
-        let ciphertext = encrypt_aead(
-            Cipher::aes_256_gcm(),
-            &decrypted_kek.to_vec(),
-            Some(&nonce),
-            &format!("secret:{}", wrap_deq_request.secret_name).as_bytes(),
-            &wrap_deq_request.dek,
-            &mut tag,
-        )
+    let p_handle = PersistentTpmHandle::new(persistent_handle).unwrap();
+    let o_handle = ctx
+        .tr_from_tpm_public(tss_esapi::handles::TpmHandle::Persistent(p_handle))
         .unwrap();
 
-        return (
-            StatusCode::OK,
-            json!({
-                "wrapped_dek": ciphertext.to_vec(),
-                "nonce":nonce,
-                "tag":tag
-            })
-            .to_string(),
-        )
-            .into_response();
-    }
-    (StatusCode::INTERNAL_SERVER_ERROR).into_response()
+    let public_key = Public::unmarshall(&wrapped_pub_key).unwrap();
+    let private_key = Private::try_from(wrapped_priv_key).unwrap();
+    let decrypted_kek = ctx
+        .execute_with_nullauth_session(|ctx| {
+            let rsa_priv_key = ctx
+                .load(o_handle.into(), private_key.clone(), public_key.clone())
+                .unwrap();
+
+            let decrypted = ctx.rsa_decrypt(
+                rsa_priv_key,
+                PublicKeyRsa::try_from(wrapped_kek).unwrap(),
+                RsaDecryptionScheme::Oaep(HashScheme::new(HashingAlgorithm::Sha256)),
+                Data::default(),
+            );
+            decrypted
+        })
+        .unwrap();
+    let mut nonce: [u8; 12] = [0; 12];
+    let sr = ring::rand::SystemRandom::new();
+    sr.fill(&mut nonce).unwrap();
+    let mut tag = [0u8; 16];
+    let ciphertext = encrypt_aead(
+        Cipher::aes_256_gcm(),
+        &decrypted_kek.to_vec(),
+        Some(&nonce),
+        &format!("secret:{}", wrap_deq_request.secret_name).as_bytes(),
+        &wrap_deq_request.dek,
+        &mut tag,
+    )
+    .unwrap();
+    drop(ctx);
+
+    return (
+        StatusCode::OK,
+        json!({
+            "wrapped_dek": ciphertext.to_vec(),
+            "nonce":nonce,
+            "tag":tag
+        })
+        .to_string(),
+    )
+        .into_response();
 }
 
 // {"nonce":[139,57,143,186,132,80,251,200,78,147,175,179],"tag":[71,82,144,71,34,106,97,170,245,224,243,52,51,215,240,230],"wrapped_dek":[59,206,59,113,142,190,237,16,74,186,216,248,131],"secret_name":"w","kek":"7350335679722688512"}
@@ -336,7 +336,7 @@ pub async fn unwrap_dek(
         .await
         .unwrap();
         println!(
-            "pub_key->{:?}\npriv_key->{:?}\nkek->{:?}\nhandle->{:?}",
+            "pub_key->{:?}\npriv_key->{:?}\nkek->{:?}\nhandle-> 0x{:08x}",
             wrapped_pub_key, wrapped_priv_key, wrapped_kek, persistent_handle
         );
         // TODO: we need to decrypt the SELECTED kek.
@@ -365,6 +365,7 @@ pub async fn unwrap_dek(
                 decrypted
             })
             .unwrap();
+        drop(ctx);
         let dek_bytes = decrypt_aead(
             Cipher::aes_256_gcm(),
             &decrypted_kek.to_vec(),
@@ -374,6 +375,7 @@ pub async fn unwrap_dek(
             &&unwrap_dek_req.tag,
         )
         .unwrap();
+
         return (
             StatusCode::OK,
             json!({
@@ -451,7 +453,11 @@ async fn main() -> Result<(), String> {
     //     .unwrap_or(TctiNameConf::Device(Default::default()));
     let tcti = TctiNameConf::Swtpm(NetworkTPMConfig::default());
     let mut ctx = Arc::new(Mutex::new(Context::new(tcti).unwrap()));
-
+    // {
+    //     let mut _ctx = ctx.lock().await;
+    //     _ctx.startup(StartupType::Clear).unwrap();
+    //     drop(_ctx)
+    // }
     // Example: Get TPM properties
     // let caps = ctx.get_tpm_property(tss_esapi::constants::PropertyTag::NvCountersAvail);
     // println!("TPM Properties: {:?}", caps);

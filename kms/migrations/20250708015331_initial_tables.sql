@@ -6,6 +6,4 @@ CREATE TABLE IF NOT EXISTS kek_store (
     persistent_handle INTEGER NOT NULL,
     wrapped_priv_key BLOB NOT NULL, 
     wrapped_pub_key BLOB NOT NULL
-    -- nonce BLOB NOT NULL,
-    -- tag BLOB NOT NULL
 );
