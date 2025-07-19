@@ -38,7 +38,7 @@ bitflags = { version = "2.9.1", features = ["serde"] }
 sqlx = { version = "0.8.6", features = [
     "migrate",
     "json",
-    "postgres",
+    "sqlite",
     "ipnetwork",
     "mac_address",
     "chrono",
@@ -68,3 +68,5 @@ reqwest = { version = "0.12.15", features = [
 ] }
 chrono = { version = "0.4.38", features = ["serde"] }
 axum-client-ip = { version = "1.0", default-features = false }
+tss-esapi = {version = "7.6.0",features = ["generate-bindings"]}
+rand = { version = "0.8.0" }

@@ -1,19 +1,24 @@
 use crate::{
     db::Database,
+    kek_provider::KekProvider,
     models::{Namespace, Permission, Person, PolicyRuleTarget, Project, ResourceAssignment, Role},
+    policies::split,
+    stores::{Store, kv::KvStore},
 };
 use chrono::Utc;
 use serde::{Serialize, de::DeserializeOwned};
 use snowflaked::Generator;
 use sqlx::{FromRow, Postgres, Type, postgres::PgRow};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{Mutex, RwLock};
 
 pub struct App {
     pub database: Arc<Database>,
     pub id_gen: Arc<Mutex<Generator>>,
+    pub stores: Arc<RwLock<HashMap<String, Box<dyn Store>>>>,
 }
 
+#[derive(Debug)]
 pub enum ScopeLevel {
     Instance,
     Namespace,
@@ -30,10 +35,101 @@ impl ToString for ScopeLevel {
     }
 }
 
+#[derive(Debug)]
+pub enum PolicyRuleTargetAction {
+    Allow,
+    Deny,
+    FallThrough,
+}
+
+impl Into<i32> for PolicyRuleTargetAction {
+    fn into(self) -> i32 {
+        match self {
+            PolicyRuleTargetAction::Allow => 1,
+            PolicyRuleTargetAction::Deny => 0,
+            PolicyRuleTargetAction::FallThrough => 3,
+        }
+    }
+}
+
+impl From<i32> for PolicyRuleTargetAction {
+    fn from(value: i32) -> Self {
+        match value {
+            1 => PolicyRuleTargetAction::Allow,
+            3 => PolicyRuleTargetAction::FallThrough,
+            _ => PolicyRuleTargetAction::Deny,
+        }
+    }
+}
+
+impl TryFrom<&str> for PolicyRuleTargetAction {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        return Ok(match value {
+            "allow" => Self::Allow,
+            "+" => Self::Allow,
+            "deny" => Self::Deny,
+            "-" => Self::Deny,
+            _ => Self::Deny,
+        });
+    }
+}
+
+#[derive(Debug)]
+pub enum ResourceTypes {
+    Instance,
+    Namespace,
+    Project,
+    Person,
+    Permission,
+    Role,
+    Secret,
+}
+
+#[derive(Debug)]
+pub struct EasyResource<'a>(pub ResourceTypes, pub &'a str);
+
+impl ToString for ResourceTypes {
+    fn to_string(&self) -> String {
+        String::from(match self {
+            ResourceTypes::Instance => "inst",
+            ResourceTypes::Namespace => "nmsp",
+            ResourceTypes::Project => "proj",
+            ResourceTypes::Person => "prsn",
+            ResourceTypes::Permission => "perm",
+            ResourceTypes::Role => "role",
+            ResourceTypes::Secret => "scrt",
+        })
+    }
+}
+
+impl TryFrom<&str> for ResourceTypes {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        return Ok(match value {
+            "inst" => Self::Instance,
+            "nmsp" => Self::Namespace,
+            "proj" => Self::Project,
+            "prsn" => Self::Person,
+            "perm" => Self::Permission,
+            "role" => Self::Role,
+            "scrt" => Self::Secret,
+            _ => return Err(String::from("Not found.")),
+        });
+    }
+}
+
 impl App {
     pub async fn init(database: Arc<Database>) -> Self {
+        let mut stores: HashMap<String, Box<dyn Store>> = HashMap::new();
+        let kv_store = KvStore::init().await;
+        stores
+            .insert("kv_store".to_string(), Box::new(kv_store));
         Self {
             database,
+            stores: Arc::new(RwLock::new(stores)),
             id_gen: Arc::new(Mutex::new(Generator::new(1))),
         }
     }
@@ -63,47 +159,72 @@ impl App {
         scope: ScopeLevel,
     ) -> std::result::Result<Role, String> {
         let gen_id = self.gen_id().await;
-        return Ok(sqlx::query_as::<_, Role>(r#"INSERT INTO tokaysec.roles(id,name,scope_level,defined_by) VALUES($1,$2,$3,$4) RETURNING *"#)
+        return Ok(sqlx::query_as::<_, Role>(r#"INSERT INTO tokaysec.roles(id,name,scope_level,defined_by) VALUES($1,$2,$4,$3) RETURNING *"#)
             .bind(gen_id).bind(&name).bind(&creator_id).bind(scope.to_string()).fetch_one(&self.database.inner).await.unwrap());
     }
-    pub async fn create_project(&self, name: &str) -> std::result::Result<Project, String> {
+    pub async fn get_project(&self, project_id: &str) -> std::result::Result<Project, String> {
+        return Ok(sqlx::query_as::<_, Project>(
+            r#"SELECT * FROM tokaysec.projects WHERE id = ($1)"#,
+        )
+        .bind(project_id)
+        .fetch_one(&self.database.inner)
+        .await
+        .unwrap());
+    }
+    pub async fn create_project(
+        &self,
+        kek_provider: &dyn KekProvider,
+        name: &str,
+        namespace: &str,
+    ) -> std::result::Result<Project, String> {
+        let new_kek_id = kek_provider.init_new_kek().await.unwrap();
+
         let created_when = Utc::now();
         let gen_id = self.gen_id().await;
         return Ok(sqlx::query_as::<_, Project>(
-            r#"INSERT INTO tokaysec.projects(id,name,added_when) VALUES($1,$2,$3) RETURNING *"#,
+            r#"INSERT INTO tokaysec.projects(id,name,namespace,kek_id,added_when) VALUES($1,$2,$3,$4,$5) RETURNING *"#,
         )
         .bind(gen_id)
         .bind(&name)
+        .bind(&namespace)
+        .bind(&new_kek_id)
         .bind(created_when)
         .fetch_one(&self.database.inner)
         .await
         .unwrap());
     }
-    pub async fn create_namespace(&self, name: &str) -> std::result::Result<Namespace, String> {
+    pub async fn create_namespace(
+        &self,
+        name: &str,
+        creator_id: &str,
+    ) -> std::result::Result<Namespace, String> {
         let created_when = Utc::now();
         let gen_id = self.gen_id().await;
         return Ok(sqlx::query_as::<_, Namespace>(
-            r#"INSERT INTO tokaysec.namespaces(id,name,added_when) VALUES($1,$2,$3) RETURNING *"#,
+            r#"INSERT INTO tokaysec.namespaces(id,name,added_when,last_updated,created_by) VALUES($1,$2,$3,$3,$4) RETURNING *"#,
         )
         .bind(gen_id)
         .bind(&name)
         .bind(created_when)
+        .bind(&creator_id)
         .fetch_one(&self.database.inner)
         .await
         .unwrap());
     }
     pub async fn create_resource_assignment(
         &self,
-        target: &str,
-        resource: &str,
+        target: EasyResource<'_>,
+        resource: EasyResource<'_>,
         assigned_by: &str,
     ) -> std::result::Result<ResourceAssignment, String> {
         let assigned_when = Utc::now();
         return Ok(sqlx::query_as::<_, ResourceAssignment>(
-            r#"INSERT INTO tokaysec.resource_assignment(assigned_to,resource,assigned_by,assigned_when) VALUES($1,$2,$3,$4) RETURNING *"#,
+            r#"INSERT INTO tokaysec.resource_assignment(assigned_to,assigned_to_type,resource,resource_type,assigned_by,assigned_when) VALUES($1,$2,$3,$4,$5,$6) RETURNING *"#,
         )
-        .bind(&target)
-        .bind(&resource)
+        .bind(&target.1)
+        .bind(target.0.to_string())
+        .bind(&resource.1)
+        .bind(resource.0.to_string())
         .bind(&assigned_by)
         .bind(assigned_when)
         .fetch_one(&self.database.inner)
@@ -112,17 +233,27 @@ impl App {
     }
     pub async fn create_policy_rule_target(
         &self,
-        name: &str,
+        target: &str,
+        action: PolicyRuleTargetAction,
+        resource: &str,
     ) -> std::result::Result<PolicyRuleTarget, String> {
         let created_when = Utc::now();
         let gen_id = self.gen_id().await;
-        todo!()
+        let (target, target_type) = split(target.to_string());
+        let (resource, resource_type) = split(resource.to_string());
+        let action: i32 = action.into();
+        return Ok(sqlx::query_as::<_, PolicyRuleTarget>(r#"INSERT INTO tokaysec.policy_rule_target(id,target,target_type,action,resource,resource_type) VALUES($1,$2,$3,$4,$5,$6) RETURNING *"#)
+            .bind(gen_id).bind(target).bind(target_type.to_string()).bind(action).bind(resource).bind(resource_type.to_string()).fetch_one(&self.database.inner).await.unwrap());
     }
-    pub async fn create_permission(&self, name: &str) -> std::result::Result<Permission, String> {
+    pub async fn create_permission(
+        &self,
+        name: &str,
+        scope_level: Option<ScopeLevel>,
+    ) -> std::result::Result<Permission, String> {
         let created_when = Utc::now();
         let gen_id = self.gen_id().await;
-        return Ok(sqlx::query_as::<_, Permission>(r#"INSERT INTO tokaysec.permissions(id,permission,added_when) VALUES($1,$2,$3) RETURNING *"#)
-            .bind(gen_id).bind(&name).bind(created_when).fetch_one(&self.database.inner).await.unwrap());
+        return Ok(sqlx::query_as::<_, Permission>(r#"INSERT INTO tokaysec.permissions(id,permission,scope_level,added_when) VALUES($1,$2,$3,$4) RETURNING *"#)
+            .bind(gen_id).bind(&name).bind(scope_level.map(|e| e.to_string())).bind(created_when).fetch_one(&self.database.inner).await.unwrap());
     }
     pub async fn get_config_value<A: DeserializeOwned>(
         &self,

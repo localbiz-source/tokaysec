@@ -1,10 +1,10 @@
-use crate::secure_buf::SecureBuffer;
+use crate::{dek::Dek, secure_buf::SecureBuffer};
 
 pub mod fs;
 pub mod tokaykms;
 
 #[async_trait::async_trait]
-pub trait KekProvider {
+pub trait KekProvider: Sync {
     fn init() -> Self
     where
         Self: Sized,
@@ -22,9 +22,12 @@ pub trait KekProvider {
     }
     async fn wrap_dek<'a>(
         &self,
-        _dek: SecureBuffer,
+        _dek: Dek,
         _secret_name: &'a str,
     ) -> Result<(Vec<u8>, [u8; 12], [u8; 16]), String> {
+        unimplemented!()
+    }
+    async fn init_new_kek(&self) -> Result<String, String> {
         unimplemented!()
     }
 }

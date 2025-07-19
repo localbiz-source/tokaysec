@@ -8,6 +8,7 @@ use ring::rand::SecureRandom;
 use tracing::info;
 use zeroize::Zeroize;
 
+use crate::dek::Dek;
 use crate::{kek_provider::KekProvider, secure_buf::SecureBuffer};
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -84,7 +85,7 @@ IS MEANT FOR TESTING PURPOSES ONLY.\x1B[0m
     }
     async fn wrap_dek<'a>(
         &self,
-        dek: SecureBuffer,
+        dek: Dek,
         secret_name: &'a str,
     ) -> Result<(Vec<u8>, [u8; 12], [u8; 16]), String> {
         let mut nonce: [u8; 12] = [0; 12];
@@ -96,7 +97,7 @@ IS MEANT FOR TESTING PURPOSES ONLY.\x1B[0m
             &self._kek.expose(),
             Some(&nonce),
             &format!("secret:{}", secret_name).as_bytes(),
-            &dek.expose(),
+            &dek.__inner.expose(),
             &mut tag,
         )
         .unwrap();
@@ -107,7 +108,11 @@ IS MEANT FOR TESTING PURPOSES ONLY.\x1B[0m
 
 impl Drop for FileSystemKEKProvider {
     fn drop(&mut self) {
-        let mut kek_file = std::fs::OpenOptions::new().create(true).write(true).open("./kek/kek.key").unwrap();
+        let mut kek_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open("./kek/kek.key")
+            .unwrap();
         let mut kek_buffer = &mut self._kek.expose();
         kek_file.write_all(&mut kek_buffer).unwrap();
         drop(kek_file);

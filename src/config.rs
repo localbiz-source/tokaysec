@@ -1,23 +1,30 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StoreConfig {
+    pub r#type: String,
+}
+#[derive(Serialize, Deserialize, Debug)]
 pub struct KekConfig {
     pub provider: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "provider")]
 pub enum KMSProviders {
     TokayKMS { host: String, port: u16 },
-    Fs
+    Fs,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     pub kms: KMSProviders,
+    //pub stores: HashMap<String, StoreConfig>,
     pub migrations: String,
     pub postgres: String,
-    pub allow_kms_colocation: bool
+    pub allow_kms_colocation: bool,
 }
 
 // Deny / Allow list is a list of
