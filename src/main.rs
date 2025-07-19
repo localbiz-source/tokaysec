@@ -259,7 +259,7 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
         .get_config_value::<String>("admin_account_id")
         .await
         .unwrap();
-    let admin_user: &str = admin_id.as_str();
+    let _admin_user: &str = admin_id.as_str();
     println!(
         "Can create secrets? {:?}",
         check_allowed(
