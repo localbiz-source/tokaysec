@@ -20,18 +20,25 @@ use aes_gcm::{
 
 pub(crate) struct TokayKMSKEKProvider {
     _http: Client,
+    base: String,
+}
+
+impl TokayKMSKEKProvider {
+    pub fn init(base: String) -> Self
+    where
+        Self: Sized,
+    {
+        let http = Client::builder().build().unwrap();
+        // TODO: Using builder pattern for now because the mTLS
+        // certs will require the builder..pretty sure. Update
+        // to the config pointing to certs will also need to
+        // be added in the future
+        Self { _http: http, base }
+    }
 }
 
 #[async_trait::async_trait]
 impl KekProvider for TokayKMSKEKProvider {
-    fn init() -> Self
-    where
-        Self: Sized,
-    {
-        Self {
-            _http: Client::new(),
-        }
-    }
     async fn init_new_kek(&self) -> Result<String, String> {
         #[derive(Serialize, Deserialize, Debug)]
         struct InitKekResponse {

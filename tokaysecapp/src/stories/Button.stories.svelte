@@ -3,12 +3,13 @@
   import Button from "./Button.svelte";
   import { fn } from "storybook/test";
   import ArrowIcon from "./ArrowIcon.svelte";
-
+  import AddPersonIcon from "./AddPersonIcon.svelte";
   // More on how to set up stories at: https://storybook.js.org/docs/writing-stories
   const { Story } = defineMeta({
     title: "Example/Button",
     component: Button,
     tags: ["autodocs"],
+    
     argTypes: {
       // backgroundColor: { control: 'color' },
       // size: {
@@ -36,6 +37,26 @@
 <Story
   name="GhostWithIcon"
   args={{ style: "ghost", label: "Button", icon: ArrowIcon }}
+/>
+
+<Story
+  name="PrimaryWithAddPersonIcon"
+  args={{ style: "primary", label: "Button", icon: AddPersonIcon }}
+/>
+
+<Story
+  name="GhostWithAddPersonIcon"
+  args={{ style: "ghost", label: "Button", icon: AddPersonIcon }}
+/>
+
+<Story
+  name="PrimaryLoading"
+  args={{ style: "primary", label: "Button", loading: true }}
+/>
+
+<Story
+  name="GhostLoading"
+  args={{ style: "ghost", label: "Button", loading: true  }}
 />
 <!-- <Story name="Secondary" args={{ label: 'Button' }} />
 

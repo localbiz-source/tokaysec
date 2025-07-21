@@ -14,7 +14,7 @@ pub struct KekConfig {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "provider")]
 pub enum KMSProviders {
-    TokayKMS { host: String, port: u16 },
+    TokayKMS { base: String },
     Fs,
 }
 

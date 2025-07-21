@@ -33,6 +33,7 @@ use std::{
     collections::{HashMap, HashSet},
     io::Read,
     mem,
+    net::SocketAddr,
     sync::Arc,
 };
 use subtle::ConstantTimeEq;
@@ -48,6 +49,7 @@ use crate::{
     kek_provider::{KekProvider, fs::FileSystemKEKProvider, tokaykms::TokayKMSKEKProvider},
     models::{Namespace, Permission, Person, PolicyRuleTarget, Project, ResourceAssignment, Role},
     policies::{AccessAction, check_allowed},
+    routes::generate_routers,
     secure_buf::SecureBuffer,
     stores::{
         Store,
@@ -132,11 +134,7 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
             .await
             .unwrap(),
     );
-    let app = Arc::new(App::init(db).await);
-    let kek_provider: &dyn KekProvider = match config.kms {
-        config::KMSProviders::Fs => &FileSystemKEKProvider::init(),
-        config::KMSProviders::TokayKMS { host, port } => &TokayKMSKEKProvider::init(),
-    };
+    let app = App::init(db, config).await;
     if !app
         .get_config_value::<bool>("intially_initialized")
         .await
@@ -166,12 +164,21 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
             .create_namespace("default_namespace", &admin_person.id)
             .await
             .unwrap();
-        let default_project = app
-            .create_project(kek_provider, "default_projcet", &default_namespace.id)
+        let kek_provider = app.kek_provider.to_owned();
+        let default_project: Project = app
+            .create_project(
+                (*kek_provider).as_ref(),
+                "default_projcet",
+                &default_namespace.id,
+            )
             .await
             .unwrap();
         let top_secret_project = app
-            .create_project(kek_provider, "top_secret_project", &default_namespace.id)
+            .create_project(
+                (*kek_provider).as_ref(),
+                "top_secret_project",
+                &default_namespace.id,
+            )
             .await
             .unwrap();
         app.create_resource_assignment(
@@ -253,296 +260,34 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
             .unwrap();
         info!("Initial initialization is complete!");
     }
+
+    let routes = generate_routers(app).await;
+    let addr = SocketAddr::from(([0, 0, 0, 0], 2323));
+    info!("Starting on: {addr:?}");
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(
+        listener,
+        routes.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
     // top secret : 7352141083272286208
     // default : 7352141003882500096
-    let admin_id = app
-        .get_config_value::<String>("admin_account_id")
-        .await
-        .unwrap();
-    let _admin_user: &str = admin_id.as_str();
-    println!(
-        "Can create secrets? {:?}",
-        check_allowed(
-            &app,
-            Some(String::from("7352140924266221570")),
-            Some(String::from("7352141003882500096")),
-            String::from("perm:1"),
-            admin_id.to_owned(),
-            HashSet::from_iter(vec![AccessAction::CreateSecret])
-        )
-        .await
-    );
-    let stores = app.stores.clone();
-    let stores_read = stores.read().await;
-    let kv_store = stores_read.get("kv_store").unwrap().to_owned();
-    kv_store.get(&app, "7352141854256664576", kek_provider).await;
-    // kv_store
-    //     .store(
-    //         &app,
-    //         String::from("7352141003882500096"),
-    //         kek_provider,
-    //         json!({
-    //             "name": "Hello, ",
-    //             "value": vec![72, 101, 108, 108, 111, 44, 32, 119, 111, 114, 108, 100, 33]
-    //         }),
-    //         admin_user,
-    //     )
-    //     .await;
-
-
-    // TODO: clean this up. break it up.
-    // let mut formated_namespaces = vec![];
-    // for namespace in sqlx::query_as::<_, Namespace>(r#"SELECT * FROM tokaysec.namespaces"#)
-    //     .fetch_all(&app.database.inner)
-    //     .await
-    //     .unwrap()
-    // {
-    //     let mut formated_projects = vec![];
-    //     let mut formated_roles = vec![];
-    //     for role in sqlx::query_as::<_, Role>(
-    //         r#"SELECT * FROM tokaysec.roles WHERE scope_level = $1 AND defined_by = ($2)"#,
-    //     )
-    //     .bind(ScopeLevel::Namespace.to_string())
-    //     .bind(&namespace.id)
-    //     .fetch_all(&app.database.inner)
-    //     .await
-    //     .unwrap()
-    //     {
-    //         formated_roles.push(json!({
-    //             "name": role.name
-    //         }));
-    //     }
-
-    //     for project in sqlx::query_as::<_, Project>(
-    //         r#"SELECT * FROM tokaysec.projects WHERE namespace = ($1)"#,
-    //     )
-    //     .bind(&namespace.id)
-    //     .fetch_all(&app.database.inner)
-    //     .await
-    //     .unwrap()
-    //     {
-    //         let mut fomrated_rules = vec![];
-    //         let target_rules = sqlx::query_as::<_, PolicyRuleTarget>(
-    //             r#"SELECT * FROM tokaysec.policy_rule_target WHERE target = ($1) AND target_type = 'proj'"#,
-    //         )
-    //         .bind(&project.id)
-    //         .fetch_all(&app.database.inner)
-    //         .await
-    //         .unwrap();
-    //         for rule in target_rules {
-    //             fomrated_rules.push(match rule.action {
-    //                 0 => format!("-{}:{}", rule.resource_type, rule.resource),
-    //                 1 => format!("+{}:{}", rule.resource_type, rule.resource),
-    //                 _ => continue,
-    //             })
-    //         }
-    //         formated_projects.push(json!({
-    //             "name": project.name,
-    //             "rules": fomrated_rules
-    //         }));
-    //     }
-    //     formated_namespaces.push(json!({
-    //         "projects": formated_projects,
-    //         "roles": formated_roles,
-    //         "name": namespace.name
-    //     }));
-    // }
-    // let mut formated_roles = vec![];
-    // let mut formated_people = vec![];
-    // for role in sqlx::query_as::<_, Role>(
-    //     r#"SELECT * FROM tokaysec.roles WHERE scope_level = 'instance' OR scope_level = NULL"#,
-    // )
-    // .fetch_all(&app.database.inner)
-    // .await
-    // .unwrap()
-    // {
-    //     let mut formated_perms = vec![];
-    //     let permissions = sqlx::query_as::<_, PolicyRuleTarget>(
-    //         r#"SELECT * FROM tokaysec.policy_rule_target WHERE target = $1 AND target_type = 'role'"#,
-    //     ).bind(role.id)
-    //     .fetch_all(&app.database.inner)
+    // let admin_id = app
+    //     .get_config_value::<String>("admin_account_id")
     //     .await
     //     .unwrap();
-    //     for perm in permissions {
-    //         formated_perms.push(match perm.action {
-    //             0 => format!("-{}:{}", perm.resource_type, perm.resource),
-    //             1 => format!("+{}:{}", perm.resource_type, perm.resource),
-    //             _ => continue,
-    //         })
-    //     }
-    //     formated_roles.push(json!({
-    //         "name": role.name,
-    //         "permissions": formated_perms
-    //     }))
-    // }
-    // for person in sqlx::query_as::<_, Person>(r#"SELECT * FROM tokaysec.people"#)
-    //     .fetch_all(&app.database.inner)
-    //     .await
-    //     .unwrap()
-    // {
-    //     let mut formated_roles = vec![];
-    //     for assignment in sqlx::query_as::<_, ResourceAssignment>(
-    //         r#"SELECT * FROM tokaysec.resource_assignment WHERE assigned_to = $1"#,
-    //     )
-    //     .bind(person.id)
-    //     .fetch_all(&app.database.inner)
-    //     .await
-    //     .unwrap()
-    //     {
-    //         match ResourceTypes::try_from(assignment.resource_type.as_str()).unwrap() {
-    //             ResourceTypes::Instance => todo!(),
-    //             ResourceTypes::Namespace => todo!(),
-    //             ResourceTypes::Project => todo!(),
-    //             ResourceTypes::Person => todo!(),
-    //             ResourceTypes::Permission => todo!(),
-    //             ResourceTypes::Role => {
-    //                 formated_roles.push(format!(
-    //                     "+{}:{}",
-    //                     assignment.resource_type, assignment.resource
-    //                 ));
-    //             }
-    //         }
-    //     }
-    //     formated_people.push(json!({
-    //         "name": person.name,
-    //         "roles": formated_roles
-    //     }));
-    // }
+    // let _admin_user: &str = admin_id.as_str();
     // println!(
-    //     "(checks:{:?}) \n\n  {:#?}",
+    //     "Can create secrets? {:?}",
     //     check_allowed(
     //         &app,
-    //         Some(String::from("7350660643688550400")),
-    //         Some(String::from("7350660643692744704")),
-    //         String::from("proj:7350660643692744704"),
-    //         String::from("7350660643675967489"),
-    //         AccessAction::Manage
+    //         Some(String::from("7352140924266221570")),
+    //         Some(String::from("7352141003882500096")),
+    //         String::from("perm:1"),
+    //         admin_id.to_owned(),
+    //         HashSet::from_iter(vec![AccessAction::CreateSecret])
     //     )
-    //     .await,
-    //     json!({
-    //         "people": formated_people,
-    //         "roles": formated_roles,
-    //         "namespaces": formated_namespaces
-    //     })
-    // );
-    //app.database.create_person(app.to_owned(), "jharris").await;
-    // println!(
-    //     "{:?}",
-    //     key_value_engine
-    //         .get_secret(&app, "new-secret")
-    //         .await
-    //         .unwrap()
-    //         .id
-    // );
-    // let secret_to_encrypt: String = String::from("this key is supposed to be a secret.");
-    // // Generate deks
-    // let mut _dek: SecureBuffer = SecureBuffer::new(32).unwrap();
-    // let dek_slice = _dek.expose_mut();
-    // OsRng.fill_bytes(dek_slice);
-    // // End Generate dek
-    // // Generate AAD (additional authenticated data)
-    // let id = app.gen_id().await;
-    // let name = String::from("new-secret");
-    // let aad = format!("name={}&key_id={}&version={}", &name, &id, "v0.1.0").into_bytes();
-    // let aad_hash = sha3::Sha3_256::digest(&aad);
-    // // End AAD generation
-    // // FIRST DEK splitting
-    // let dek = _dek.expose();
-    // let mut aes_key = [0u8; 32];
-    // let mut kmac_key = [0u8; 32];
-
-    // let hk = Hkdf::<Sha3_384>::new(None, dek);
-    // hk.expand(b"AES-256-GCM", &mut aes_key).unwrap();
-    // hk.expand(b"KMAC-256", &mut kmac_key).unwrap();
-    // // End first split
-    // // Start encryption
-    // let cipher = Aes256Gcm::new_from_slice(&aes_key).unwrap();
-    // let mut nonce: [u8; 12] = [0; 12];
-    // let sr = ring::rand::SystemRandom::new();
-    // sr.fill(&mut nonce).unwrap();
-    // let mut gcm_tag = [0u8; 16];
-    // let ciphertext = encrypt_aead(
-    //     Cipher::aes_256_gcm(),
-    //     &aes_key,
-    //     Some(&nonce),
-    //     &aad,
-    //     &secret_to_encrypt.as_bytes(),
-    //     &mut gcm_tag,
-    // )
-    // .unwrap();
-    // let mut mac = Kmac::v256(&kmac_key, &[]);
-    // for chunk in &[&ciphertext, &aad] {
-    //     mac.update(chunk);
-    // }
-    // // KMAC-256 over ciphertext + AAD
-    // let mut kmac_tag = [0u8; 32];
-    // mac.finalize(&mut kmac_tag);
-    // // Finish encryption
-    // // Wrap the DEK in the Kek and prepare to store along side secret
-    // let (wrapped_key, dek_nonce, tag) = kek_provider
-    //     .wrap_dek(_dek, "super-secret-name")
     //     .await
-    //     .unwrap();
-    // let _dek = kek_provider
-    //     .unwrap_dek(&wrapped_key, dek_nonce, tag, "super-secret-name")
-    //     .await;
-    // //drop(_dek);
-
-    // // let seet = key_value_engine
-    // //     .store_secret(
-    // //         &app,
-    // //         "new-secret",
-    // //         &id,
-    // //         StoredSecretObject {
-    // //             ciphertext,
-    // //             kmac_tag: kmac_tag.to_vec(),
-    // //             gcm_tag: gcm_tag.to_vec(),
-    // //             wrapped_dek: wrapped_key,
-    // //             nonce: nonce.to_vec(),
-    // //         },
-    // //     )
-    // //     .await
-    // //     .unwrap();
-    // // println!(
-    // //     "{:?} {:?} {:?} {:?} {:?}",
-    // //     ciphertext, nonce, wrapped_key, dek_nonce, aad
-    // // );
-    // // End encryption section
-
-    // // Decrypt∂
-    // // Split start
-    // let dek = _dek.expose();
-    // let mut aes_key = [0u8; 32];
-    // let mut kmac_key = [0u8; 32];
-
-    // let hk = Hkdf::<Sha3_384>::new(None, dek);
-    // hk.expand(b"AES-256-GCM", &mut aes_key).unwrap();
-    // hk.expand(b"KMAC-256", &mut kmac_key).unwrap();
-    // // Split end
-    // // Compute kmac
-    // let mut mac = Kmac::v256(&kmac_key, &[]);
-    // for chunk in &[&ciphertext, &aad] {
-    //     mac.update(chunk);
-    // }
-    // // KMAC-256 over ciphertext + AAD
-    // let mut computed_kmac_tag = [0u8; 32];
-    // mac.finalize(&mut computed_kmac_tag);
-    // // Compute kmac end
-    // // Compare start
-    // if kmac_tag.ct_ne(&computed_kmac_tag).into() {
-    //     panic!("mismatch: {:?} != {:?}", kmac_tag, computed_kmac_tag);
-    // }
-
-    // let plaintext = decrypt_aead(
-    //     Cipher::aes_256_gcm(),
-    //     &aes_key,
-    //     Some(&nonce),
-    //     &aad,
-    //     &ciphertext,
-    //     &gcm_tag,
-    // )
-    // .unwrap();
-    // // decipher end
-    // let value = Zeroizing::new(plaintext);
-    // println!("{:?}", String::from_utf8(value.to_vec()));
+    // );
 }

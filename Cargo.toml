@@ -70,3 +70,5 @@ reqwest = { version = "0.12.15", features = [
     "rustls-tls-webpki-roots",
 ] }
 chrono = { version = "0.4.38", features = ["serde"] }
+tower-http = { version = "0.6.2", features = ["trace", "fs", "cors"] }
+axum-client-ip = { version = "1.0", default-features = false }

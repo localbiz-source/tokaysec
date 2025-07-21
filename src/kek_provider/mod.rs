@@ -3,14 +3,14 @@ use crate::{dek::Dek, secure_buf::SecureBuffer};
 pub mod fs;
 pub mod tokaykms;
 
+// Init function not defined on trait because
+// it is not called by the dynamic trait objects
+// and only called in app.rs to setup the provider.
+// indiviudal providers choose the structure of
+// their init fn and get called individually at
+// startup. Same idea for the stores as well.
 #[async_trait::async_trait]
-pub trait KekProvider: Sync {
-    fn init() -> Self
-    where
-        Self: Sized,
-    {
-        unimplemented!()
-    }
+pub trait KekProvider: Send + Sync {
     async fn unwrap_dek<'a>(
         &self,
         _dek: &'a [u8],

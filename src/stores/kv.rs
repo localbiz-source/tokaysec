@@ -10,7 +10,7 @@ use crate::{
     kek_provider::KekProvider,
     models::{KVStoredValue, WrappedDek},
     secure_buf::SecureBuffer,
-    stores::{kv, Store},
+    stores::{RetrievedSecretData, Store, kv},
 };
 
 #[derive(Serialize, Deserialize)]
@@ -38,6 +38,9 @@ pub struct KvStoreReturnDek {
 pub struct KvStore {}
 
 impl KvStore {
+    pub async fn init() -> Self {
+        Self {}
+    }
     pub async fn store_secret(
         &self,
         app: &App,
@@ -70,7 +73,10 @@ impl KvStore {
         .unwrap();
         app.create_resource_assignment(
             EasyResource(crate::app::ResourceTypes::Project, &project),
-            EasyResource(crate::app::ResourceTypes::Secret, &stored_value.id),
+            EasyResource(
+                crate::app::ResourceTypes::Secret,
+                &format!("kv_store:{}", &stored_value.id),
+            ),
             creator,
         )
         .await
@@ -81,10 +87,22 @@ impl KvStore {
 
 #[async_trait::async_trait]
 impl Store for KvStore {
-    async fn init() -> Self {
-        Self {}
+    async fn get(&self, app: &App, id: &str) -> RetrievedSecretData
+    where
+        Self: Sized,
+    {
+        let kv_data =
+            sqlx::query_as::<_, KVStoredValue>(r#"SELECT * FROM tokaysec.kv_store WHERE id = $1"#)
+                .bind(&id)
+                .fetch_one(&app.database.inner)
+                .await
+                .unwrap();
+        return RetrievedSecretData {
+            id: kv_data.id,
+            name: kv_data.key,
+        };
     }
-    async fn get(&self, app: &App, id: &str, kek_provider: &dyn KekProvider) -> ()
+    async fn retrieve(&self, app: &App, id: &str, kek_provider: &dyn KekProvider) -> ()
     where
         Self: Sized,
     {
@@ -110,7 +128,13 @@ impl Store for KvStore {
             )
             .await
             .into();
-        let raw_data = unwrapped_dek.unwrap_data(kv_data.value, kv_data.kmac_tag, &kv_data.key, kv_data.nonce, kv_data.gcm_tag);
+        let raw_data = unwrapped_dek.unwrap_data(
+            kv_data.value,
+            kv_data.kmac_tag,
+            &kv_data.key,
+            kv_data.nonce,
+            kv_data.gcm_tag,
+        );
         println!("{:?}", String::from_utf8(raw_data.expose().to_vec()));
         return ();
     }
@@ -125,7 +149,7 @@ impl Store for KvStore {
     where
         Self: Sized,
     {
-        let dek = Dek::init(); 
+        let dek = Dek::init();
         let data: KvStoreStoreData = serde_json::from_value(data).unwrap();
         let sec_data = SecureBuffer::from_slice(&data.value).unwrap();
         drop(data.value);

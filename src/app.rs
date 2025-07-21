@@ -1,6 +1,7 @@
 use crate::{
+    config::{self, Config},
     db::Database,
-    kek_provider::KekProvider,
+    kek_provider::{KekProvider, fs::FileSystemKEKProvider, tokaykms::TokayKMSKEKProvider},
     models::{Namespace, Permission, Person, PolicyRuleTarget, Project, ResourceAssignment, Role},
     policies::split,
     stores::{Store, kv::KvStore},
@@ -12,10 +13,12 @@ use sqlx::{FromRow, Postgres, Type, postgres::PgRow};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
+#[derive(Clone)]
 pub struct App {
     pub database: Arc<Database>,
     pub id_gen: Arc<Mutex<Generator>>,
     pub stores: Arc<RwLock<HashMap<String, Box<dyn Store>>>>,
+    pub kek_provider: Arc<Box<dyn KekProvider>>,
 }
 
 #[derive(Debug)]
@@ -122,15 +125,19 @@ impl TryFrom<&str> for ResourceTypes {
 }
 
 impl App {
-    pub async fn init(database: Arc<Database>) -> Self {
+    pub async fn init(database: Arc<Database>, config: Config) -> Self {
         let mut stores: HashMap<String, Box<dyn Store>> = HashMap::new();
         let kv_store = KvStore::init().await;
-        stores
-            .insert("kv_store".to_string(), Box::new(kv_store));
+        stores.insert("kv_store".to_string(), Box::new(kv_store));
+        let kek_provider: Arc<Box<dyn KekProvider>> = Arc::new(match config.kms {
+            config::KMSProviders::Fs => Box::new(FileSystemKEKProvider::init()),
+            config::KMSProviders::TokayKMS { base } => Box::new(TokayKMSKEKProvider::init(base)),
+        });
         Self {
             database,
             stores: Arc::new(RwLock::new(stores)),
             id_gen: Arc::new(Mutex::new(Generator::new(1))),
+            kek_provider,
         }
     }
     pub async fn gen_id(&self) -> String {
