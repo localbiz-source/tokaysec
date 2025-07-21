@@ -19,9 +19,8 @@ pub(crate) struct FileSystemKEKProvider {
     _kek: SecureBuffer,
 }
 
-#[async_trait::async_trait]
-impl KekProvider for FileSystemKEKProvider {
-    fn init() -> Self
+impl FileSystemKEKProvider {
+    pub fn init() -> Self
     where
         Self: Sized,
     {
@@ -65,6 +64,10 @@ IS MEANT FOR TESTING PURPOSES ONLY.\x1B[0m
         };
         return Self { _kek: kek };
     }
+}
+
+#[async_trait::async_trait]
+impl KekProvider for FileSystemKEKProvider {
     async fn unwrap_dek<'a>(
         &self,
         dek: &'a [u8],

@@ -22,11 +22,11 @@
     );
 </script>
 
-<div class="flex w-full flex-col gap-2">
+<div class="text-white flex w-full flex-col gap-2">
     <span class="text-md font-['Myriad-Pro']">{label}</span>
     <div class={surroundingBoxStyles}>
         <select
-            class="w-full appearance-none border-1 border-neutral-200 bg-neutral-200 px-2 py-1.5 font-['Myriad-Pro'] text-sm outline-[1.5px] outline-neutral-200 transition-all duration-150 hover:outline-neutral-500 focus:border-black focus:bg-white focus:outline-black"
+            class="cursor-pointer appearance-none w-full text-white border-1 border-l-2 border-l-neutral-500 border-neutral-700 bg-neutral-700 px-2 py-1.5 font-['Myriad-Pro'] text-sm outline-[1.5px] outline-neutral-700 transition-all duration-150 focus:border-l-1 active:border-l-1 hover:border-l-1 hover:border-neutral-300 focus:border-neutral-400 focus:bg-neutral-700 focus:outline-white"
         >
             <option>--</option>
             {#each options as option}
