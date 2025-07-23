@@ -1,4 +1,4 @@
-use std::io::empty;
+use std::{collections::HashMap, io::empty};
 
 use aes_gcm::aead::{OsRng, rand_core::RngCore};
 use chrono::Utc;
@@ -10,13 +10,14 @@ use crate::{
     kek_provider::KekProvider,
     models::{KVStoredValue, WrappedDek},
     secure_buf::SecureBuffer,
-    stores::{RetrievedSecretData, Store, kv},
+    stores::{RetrievedSecretData, Store, StoreUiRequirements, kv},
 };
 
 #[derive(Serialize, Deserialize)]
 pub struct KvStoreStoreData {
     pub name: String,
     pub value: Vec<u8>,
+    pub project: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -87,6 +88,13 @@ impl KvStore {
 
 #[async_trait::async_trait]
 impl Store for KvStore {
+    fn ui_reqs(&self) -> StoreUiRequirements {
+        StoreUiRequirements {
+            name: true,
+            description: false,
+            secret_type: true,
+        }
+    }
     async fn get(&self, app: &App, id: &str) -> RetrievedSecretData
     where
         Self: Sized,
@@ -102,10 +110,16 @@ impl Store for KvStore {
             name: kv_data.key,
         };
     }
-    async fn retrieve(&self, app: &App, id: &str, kek_provider: &dyn KekProvider) -> ()
+    async fn retrieve(
+        &self,
+        app: &App,
+        data: HashMap<String, String>,
+        kek_provider: &dyn KekProvider,
+    ) -> ()
     where
         Self: Sized,
     {
+        let id = data.get("id").unwrap();
         let kv_data =
             sqlx::query_as::<_, KVStoredValue>(r#"SELECT * FROM tokaysec.kv_store WHERE id = $1"#)
                 .bind(&id)
@@ -138,6 +152,7 @@ impl Store for KvStore {
         println!("{:?}", String::from_utf8(raw_data.expose().to_vec()));
         return ();
     }
+    
     async fn store(
         &self,
         app: &App,

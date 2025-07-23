@@ -10,6 +10,20 @@ use serde_json::json;
 
 use crate::app::App;
 
+pub async fn ui_reqs(
+    State(app): State<App>,
+    ConnectInfo(_client_addr): ConnectInfo<SocketAddr>,
+    Path(store): Path<String>,
+) -> impl IntoResponse {
+    let stores = app.stores.clone();
+    let stores_read = stores.read().await;
+    let store = stores_read.get(&store).unwrap().to_owned();
+    (
+        StatusCode::OK,
+        serde_json::to_string(&store.ui_reqs()).unwrap(),
+    )
+}
+
 pub async fn retrieve(
     State(app): State<App>,
     ConnectInfo(_client_addr): ConnectInfo<SocketAddr>,
@@ -21,9 +35,7 @@ pub async fn retrieve(
     let kv_store = stores_read.get(&store).unwrap().to_owned();
     let kek_provider = app.kek_provider.to_owned();
     let kek_provider = (*kek_provider).as_ref();
-    kv_store
-        .retrieve(&app, "7352141854256664576", kek_provider)
-        .await;
+    kv_store.retrieve(&app, query, kek_provider).await;
     (StatusCode::OK, json!({}).to_string())
 }
 
@@ -43,15 +55,12 @@ pub async fn store(
         .await
         .unwrap();
     let admin_user: &str = admin_id.as_str();
+    println!("{:?}", store_req);
     kv_store
         .store(
             &app,
-            String::from("7352141003882500096"),
+            serde_json::from_value::<String>(store_req["project"].to_owned()).unwrap(),
             kek_provider,
-            // json!({
-            //     "name": "Hello, ",
-            //     "value": vec![72, 101, 108, 108, 111, 44, 32, 119, 111, 114, 108, 100, 33]
-            // }),
             store_req,
             admin_user,
         )

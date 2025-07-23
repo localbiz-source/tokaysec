@@ -271,23 +271,4 @@ HOST IF RUNNING TOKAY-KMS. YOU'VE BEEN WARNED!.\x1B[0m
     )
     .await
     .unwrap();
-    // top secret : 7352141083272286208
-    // default : 7352141003882500096
-    // let admin_id = app
-    //     .get_config_value::<String>("admin_account_id")
-    //     .await
-    //     .unwrap();
-    // let _admin_user: &str = admin_id.as_str();
-    // println!(
-    //     "Can create secrets? {:?}",
-    //     check_allowed(
-    //         &app,
-    //         Some(String::from("7352140924266221570")),
-    //         Some(String::from("7352141003882500096")),
-    //         String::from("perm:1"),
-    //         admin_id.to_owned(),
-    //         HashSet::from_iter(vec![AccessAction::CreateSecret])
-    //     )
-    //     .await
-    // );
 }

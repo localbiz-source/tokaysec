@@ -9,30 +9,31 @@
         createSvelteTable,
         FlexRender,
     } from "$lib/components/ui/data-table/index.js";
+    import global_state from "../routes/namespaceAndProject";
     import * as Table from "$lib/components/ui/table/index.js";
     import DataTable from "./data-table.svelte";
-    import { Textarea } from "$lib/components/ui/textarea";
+    import { Root, Textarea } from "$lib/components/ui/textarea";
     import secrets, { type Payment, columns } from "./stores.ts";
     import { onMount } from "svelte";
     import CreateSecretsForm from "./create-secrets-form.svelte";
     import type { PageData } from "./$types.d.ts";
     let { data }: { data: PageData } = $props();
-    onMount(() => {
-        fetch(
-            "http://localhost:2323/v1/projects/7352141003882500096/secrets",
-        ).then((res) =>
-            res.json().then((json) => {
-                // todo: types.
-                $secrets = json;
-            }),
-        );
-    });
-    const fruits = [{ value: "key-value", label: "key value" }];
+    // $effect(() => {
+    //     fetch(
+    //         `http://localhost:2323/v1/projects/${$global_state.project}/secrets`,
+    //     ).then((res) =>
+    //         res.json().then((json) => {
+    //             // todo: types.
+    //             $secrets = json;
+    //         }),
+    //     );
+    // });
+    // const fruits = [{ value: "key-value", label: "key value" }];
 
-    let value = $state("");
-    const triggerContent = $derived(
-        fruits.find((f) => f.value === value)?.label ?? "Select a secret type",
-    );
+    // let value = $state("");
+    // const triggerContent = $derived(
+    //     fruits.find((f) => f.value === value)?.label ?? "Select a secret type",
+    // );
     /**
      * 
      * 
@@ -69,6 +70,7 @@
 </script>
 
 <div class="w-full h-full p-10 bg-background flex flex-col gap-3 relative">
+    <!-- {#if $global_state.namespace && $global_state.project }
     <Sheet.Root>
         <Sheet.Trigger
             class={`max-w-max ${buttonVariants({ variant: "default", size: "sm" })}`}
@@ -86,4 +88,6 @@
         </Sheet.Content>
     </Sheet.Root>
     <DataTable data={$secrets} {columns} />
+    {/if} -->
+    home
 </div>

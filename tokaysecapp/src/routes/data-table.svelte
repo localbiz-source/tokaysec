@@ -1,5 +1,9 @@
 <script lang="ts" generics="TData, TValue">
-    import { type ColumnDef, getCoreRowModel } from "@tanstack/table-core";
+    import {
+        type ColumnDef,
+        getCoreRowModel,
+        type RowSelectionState,
+    } from "@tanstack/table-core";
     import {
         createSvelteTable,
         FlexRender,
@@ -22,7 +26,20 @@
         },
         columns,
         getCoreRowModel: getCoreRowModel(),
+        state: {
+            get rowSelection() {
+                return rowSelection;
+            },
+        },
+        onRowSelectionChange: (updater) => {
+            if (typeof updater === "function") {
+                rowSelection = updater(rowSelection);
+            } else {
+                rowSelection = updater;
+            }
+        },
     });
+    let rowSelection = $state<RowSelectionState>({});
 </script>
 
 <div class="rounded-md border">
@@ -31,7 +48,7 @@
             {#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
                 <Table.Row>
                     {#each headerGroup.headers as header (header.id)}
-                        <Table.Head colspan={header.colSpan}>
+                        <Table.Head class="[&:has([role=checkbox])]:pl-3">
                             {#if !header.isPlaceholder}
                                 <FlexRender
                                     content={header.column.columnDef.header}
@@ -47,30 +64,11 @@
             {#each table.getRowModel().rows as row (row.id)}
                 <Table.Row data-state={row.getIsSelected() && "selected"}>
                     {#each row.getVisibleCells() as cell (cell.id)}
-                        <Table.Cell>
-                            {#if cell.column.id == "id" && cell.column.columnDef.cell !== undefined}
-                                <Button
-                                    onclick={async () => {
-                                        await navigator.clipboard.writeText(
-                                            cell.getValue<string>(),
-                                        );
-                                        toast.success(
-                                            "Secret ID copied to your clipboard!",
-                                            {},
-                                        );
-                                    }}
-                                    variant="outline"
-                                    size="sm"
-                                >
-                                    <Clipboard />
-                                    Copy ID
-                                </Button>
-                            {:else}
-                                <FlexRender
-                                    content={cell.column.columnDef.cell}
-                                    context={cell.getContext()}
-                                />
-                            {/if}
+                        <Table.Cell class="[&:has([role=checkbox])]:pl-3">
+                            <FlexRender
+                                content={cell.column.columnDef.cell}
+                                context={cell.getContext()}
+                            />
                         </Table.Cell>
                     {/each}
                 </Table.Row>

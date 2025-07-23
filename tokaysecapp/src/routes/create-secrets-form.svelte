@@ -2,18 +2,27 @@
     import * as Form from "$lib/components/ui/form/index.js";
     import { Input } from "$lib/components/ui/input/index.js";
     import * as Select from "$lib/components/ui/select/index.js";
+    import global_state from "../routes/namespaceAndProject";
+
     import Textarea from "$lib/components/ui/textarea/textarea.svelte";
-    import { createSecretFormSchema, type FormSchema } from "./schema";
+    import {
+        createSecretFormSchema,
+        type FormSchema,
+    } from "./namespace/[namespaceId]/project/[projectId]/secrets/schema";
     import {
         type SuperValidated,
         type Infer,
         superForm,
+        fail,
+        superValidate,
     } from "sveltekit-superforms";
-    import { zodClient } from "sveltekit-superforms/adapters";
+    import { zod, zodClient } from "sveltekit-superforms/adapters";
 
-    let { data }: { data: { form: SuperValidated<Infer<FormSchema>> } } =
+    let {
+        data,
+        projectId,
+    }: { data: { form: SuperValidated<Infer<FormSchema>> }; projectId?: string } =
         $props();
-
     const form = superForm(data.form, {
         validators: zodClient(createSecretFormSchema),
     });
@@ -35,7 +44,36 @@ tpm2_flushcontext -T "swtpm:port=2321" --transient-object
     // curl http://localhost:2323/v1/store/kv_store -X POST -H 'Content-Type: application/json' -d '{"name":"Second Secret","value":[72, 101, 108, 108, 111, 44, 32, 119, 111, 114, 108, 100, 33]}'
 </script>
 
-<form method="POST" use:enhance class="grid flex-1 auto-rows-min gap-3 px-4">
+<form
+    method="POST"
+    onsubmit={async (event) => {
+        event.preventDefault();
+        const form = await superValidate($formData, zod(createSecretFormSchema));
+        if (!form.valid) {
+            return fail(400, {
+                form,
+            });
+        }
+        const encoder = new TextEncoder();
+        const secretArray: Uint8Array = encoder.encode(form.data.secret);
+
+        await fetch("http://localhost:2323/v1/store/kv_store", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                name: form.data.name,
+                value: Array.from(secretArray),
+                project: projectId,
+            }),
+        });
+        return {
+            form,
+        };
+    }}
+    class="grid flex-1 auto-rows-min gap-3 px-4"
+>
     <Form.Field {form} name="secret_type">
         <Form.Control>
             {#snippet children({ props })}
@@ -86,7 +124,11 @@ tpm2_flushcontext -T "swtpm:port=2321" --transient-object
         <Form.Control>
             {#snippet children({ props })}
                 <Form.Label>Description</Form.Label>
-                <Textarea {...props} class="max-w-[22rem] w-full" bind:value={$formData.description} />
+                <Textarea
+                    {...props}
+                    class="max-w-[22rem] w-full"
+                    bind:value={$formData.description}
+                />
             {/snippet}
         </Form.Control>
         <Form.Description
@@ -98,11 +140,15 @@ tpm2_flushcontext -T "swtpm:port=2321" --transient-object
         <Form.Control>
             {#snippet children({ props })}
                 <Form.Label>Value</Form.Label>
-                <Textarea {...props} class="max-w-[22rem] w-full" bind:value={$formData.secret} />
+                <Textarea
+                    {...props}
+                    class="max-w-[22rem] w-full"
+                    bind:value={$formData.secret}
+                />
             {/snippet}
         </Form.Control>
         <Form.Description>The actual secret value to store</Form.Description>
         <Form.FieldErrors />
     </Form.Field>
-    <Form.Button size="sm">Submit</Form.Button>
+    <Form.Button size="sm" variant="default">Create Secret</Form.Button>
 </form>
