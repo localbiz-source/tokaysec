@@ -1,0 +1,19 @@
+# Global options
+{
+    # Optional: turn on debug logs for troubleshooting
+    debug
+}
+
+# Replace example.com with your domain or use :80/:443 for IP-based access
+:8080 {
+    route /api/* {
+        uri strip_prefix /api
+        reverse_proxy localhost:2323
+    }
+
+    # Optional: rewrite requests to index.html for SPA routing
+    @notApi {
+        not path @api
+    }
+    reverse_proxy localhost:5173
+}
