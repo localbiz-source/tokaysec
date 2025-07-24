@@ -7,11 +7,59 @@ use crate::{
     stores::{Store, kv::KvStore},
 };
 use chrono::Utc;
+use openidconnect::{
+    core::{CoreAuthPrompt, CoreGenderClaim, CoreJwsSigningAlgorithm}, AdditionalProviderMetadata, AuthenticationFlow, AuthorizationCode, Client, ClientId, ClientSecret, CsrfToken, EmptyAdditionalClaims, EmptyExtraTokenFields, EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, JsonWebKeySet, Nonce, OAuth2TokenResponse, ProviderMetadata, RedirectUrl, RevocationErrorResponseType, RevocationUrl, Scope, StandardErrorResponse, StandardTokenIntrospectionResponse, StandardTokenResponse
+};
+use openidconnect::{
+    PkceCodeChallenge,
+    core::{
+        CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClient, CoreClientAuthMethod,
+        CoreErrorResponseType, CoreGrantType, CoreIdTokenClaims, CoreIdTokenVerifier,
+        CoreJsonWebKey, CoreJweContentEncryptionAlgorithm, CoreJweKeyManagementAlgorithm,
+        CoreProviderMetadata, CoreResponseMode, CoreRevocableToken, CoreSubjectIdentifierType,
+        CoreTokenType,
+    },
+};
+use openidconnect::{core::CoreAuthenticationFlow, reqwest};
 use serde::{Serialize, de::DeserializeOwned};
 use snowflaked::Generator;
 use sqlx::{FromRow, Postgres, Type, postgres::PgRow};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
+
+#[derive(Clone)]
+pub struct AppOIDCProviderData {
+    pub client: Client<
+        EmptyAdditionalClaims,
+        CoreAuthDisplay,
+        CoreGenderClaim,
+        CoreJweContentEncryptionAlgorithm,
+        CoreJsonWebKey,
+        CoreAuthPrompt,
+        StandardErrorResponse<CoreErrorResponseType>,
+        StandardTokenResponse<
+            IdTokenFields<
+                EmptyAdditionalClaims,
+                EmptyExtraTokenFields,
+                CoreGenderClaim,
+                CoreJweContentEncryptionAlgorithm,
+                CoreJwsSigningAlgorithm,
+            >,
+            CoreTokenType,
+        >,
+        StandardTokenIntrospectionResponse<EmptyExtraTokenFields, CoreTokenType>,
+        CoreRevocableToken,
+        StandardErrorResponse<RevocationErrorResponseType>,
+        EndpointSet,
+        EndpointNotSet,
+        EndpointNotSet,
+        EndpointNotSet,
+        EndpointMaybeSet,
+        EndpointMaybeSet,
+    >,
+    pub scopes: Vec<String>,
+    pub http: reqwest::Client
+}
 
 #[derive(Clone)]
 pub struct App {
@@ -19,6 +67,7 @@ pub struct App {
     pub id_gen: Arc<Mutex<Generator>>,
     pub stores: Arc<RwLock<HashMap<String, Box<dyn Store>>>>,
     pub kek_provider: Arc<Box<dyn KekProvider>>,
+    pub oidc: Arc<RwLock<HashMap<String, AppOIDCProviderData>>>,
 }
 
 #[derive(Debug)]
@@ -127,6 +176,34 @@ impl TryFrom<&str> for ResourceTypes {
 impl App {
     pub async fn init(database: Arc<Database>, config: Config) -> Self {
         let mut stores: HashMap<String, Box<dyn Store>> = HashMap::new();
+        let mut oidc_providers: HashMap<String, AppOIDCProviderData> = HashMap::new();
+        let mut configured_providers = config.oidc.iter();
+        while let Some((name, oidc_provider)) = configured_providers.next() {
+            let id = ClientId::new(oidc_provider.client_id.to_owned());
+            let secret = ClientSecret::new(oidc_provider.client_secret.to_owned());
+            let issuer = IssuerUrl::new(oidc_provider.issuer_url.to_owned()).unwrap();
+            let http = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap();
+            let provider = CoreProviderMetadata::discover_async(issuer, &http)
+                .await
+                .unwrap();
+            let client = CoreClient::from_provider_metadata(provider, id, Some(secret))
+                // Set the URL the user will be redirected to after the authorization process.
+                .set_redirect_uri(
+                    RedirectUrl::new(format!("{}/api/v1/auth/finish/oidc/{}", &config.base_url, &name))
+                        .unwrap(),
+                );
+            oidc_providers.insert(
+                name.to_owned(),
+                AppOIDCProviderData {
+                    client: client,
+                    http,
+                    scopes: oidc_provider.scopes.to_owned(),
+                },
+            );
+        }
         let kv_store = KvStore::init().await;
         stores.insert("kv_store".to_string(), Box::new(kv_store));
         let kek_provider: Arc<Box<dyn KekProvider>> = Arc::new(match config.kms {
@@ -138,6 +215,7 @@ impl App {
             stores: Arc::new(RwLock::new(stores)),
             id_gen: Arc::new(Mutex::new(Generator::new(1))),
             kek_provider,
+            oidc: Arc::new(RwLock::new(oidc_providers)),
         }
     }
     pub async fn gen_id(&self) -> String {

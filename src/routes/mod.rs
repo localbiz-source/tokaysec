@@ -8,6 +8,7 @@ use reqwest::Method;
 use crate::{
     app::App,
     routes::{
+        auth::{finish_oidc_auth_session, get_login_options, start_oidc_auth_session},
         projects::{list_namespace_projects, list_namespaces, load_secrets},
         stores::{retrieve, store, ui_reqs},
     },
@@ -17,6 +18,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+pub mod auth;
 pub mod projects;
 pub mod stores;
 
@@ -30,6 +32,11 @@ pub async fn generate_routers(app: App) -> Router {
         .route("/{store}", post(store))
         .route("/{store}", get(retrieve))
         .route("/{store}/uireqs", get(ui_reqs));
+    // https://staging.jiternal.com/api/v1/auth/start/oidc/google
+    let auth = Router::new()
+        .route("/start/oidc/{oidc}", get(start_oidc_auth_session))
+        .route("/finish/oidc/{oidc}", get(finish_oidc_auth_session))
+        .route("/options", get(get_login_options));
     let projects = Router::new().route("/secrets", get(load_secrets));
     let namespaces = Router::new()
         .route("/", get(list_namespaces))
@@ -37,7 +44,8 @@ pub async fn generate_routers(app: App) -> Router {
     let v1 = Router::new()
         .nest("/store", stores)
         .nest("/projects/{project}", projects)
-        .nest("/namespaces", namespaces);
+        .nest("/namespaces", namespaces)
+        .nest("/auth", auth);
     let global_router = Router::new()
         .nest("/v1", v1)
         .layer(TraceLayer::new_for_http())

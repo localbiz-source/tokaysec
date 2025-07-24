@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use chrono::Utc;
+use redis::{Client, aio::ConnectionManager};
 use serde::{Deserialize, Serialize};
 use sqlx::{
     FromRow, Pool, Postgres,
@@ -11,6 +12,7 @@ use crate::{app::App, models::Person};
 
 pub struct Database {
     pub inner: Pool<Postgres>,
+    pub redis: ConnectionManager,
 }
 
 impl Database {
@@ -19,6 +21,13 @@ impl Database {
         let pool = Pool::connect(dsn).await.unwrap();
         let migrator = Migrator::new(Path::new(migrations)).await.unwrap();
         migrator.run(&pool).await.unwrap();
-        return Ok(Self { inner: pool });
+        return Ok(Self {
+            inner: pool,
+            redis: ConnectionManager::new(
+                Client::open("redis://127.0.0.1:6379".to_string()).unwrap(),
+            )
+            .await
+            .unwrap(),
+        });
     }
 }

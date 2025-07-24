@@ -68,7 +68,14 @@ reqwest = { version = "0.12.15", features = [
     "json",
     "deflate",
     "rustls-tls-webpki-roots",
+    "blocking"
 ] }
 chrono = { version = "0.4.38", features = ["serde"] }
 tower-http = { version = "0.6.2", features = ["trace", "fs", "cors"] }
 axum-client-ip = { version = "1.0", default-features = false }
+openidconnect = { version = "4.0.1" }
+axum-extra = { version = "0.10.1", features = ["cookie", "query"] }
+redis = { version = "0.32.2", features = ["tokio-rustls-comp","tls-rustls", "tls", "tokio-comp", "connection-manager", "aio"]}
+hex = { version = "0.4.3", features = ["serde"] }
+base64 = "0.22.1"
+time = "0.3.9"
